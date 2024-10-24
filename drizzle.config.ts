@@ -2,7 +2,7 @@ import { config } from "dotenv";
 import { defineConfig } from "drizzle-kit";
 
 config({
-  path: ".env.local",
+  path: ".env.development.local",
 });
 
 export default defineConfig({
