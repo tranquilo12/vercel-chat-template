@@ -41,7 +41,7 @@ export default function IndexerClient() {
 
     const fetchRepositories = async () => {
         try {
-            const response = await fetch('/api/indexer/repos')
+            const response = await fetch('/api/indexer?path=repos')
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`)
             }
