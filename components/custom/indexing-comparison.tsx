@@ -1,11 +1,23 @@
 "use client"
-import {AlertCircle, CheckCircle, XCircle, GitCompareArrows} from 'lucide-react'
+import {AlertCircle, CheckCircle, GitCompareArrows, XCircle} from 'lucide-react'
 import {useEffect, useState} from 'react'
 
 import {Badge} from "@/components/ui/badge"
 import {Button} from "@/components/ui/button"
 import {DropdownMenu, DropdownMenuContent, DropdownMenuTrigger} from "@/components/ui/dropdown-menu"
 import {Table, TableBody, TableCell, TableHead, TableHeader, TableRow} from "@/components/ui/table"
+
+// Import REPO_CONFIGS definition
+const REPO_CONFIGS = {
+    "IntoTheDeep": {
+        "path": "/volumes/IntoTheDeep",
+        "language": "python"
+    },
+    "ParationalAddOn": {
+        "path": "/volumes/ParationalAddOn",
+        "language": "typescript"
+    }
+}
 
 interface RepoComparison {
     name: string
@@ -24,12 +36,33 @@ export function IndexingComparison() {
     useEffect(() => {
         const fetchComparison = async () => {
             try {
-                const response = await fetch('/api/indexer?path=comparison')
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`)
-                }
-                const data = await response.json()
-                setComparison(data.comparison)
+                // Fetch status for each repository
+                const statuses = await Promise.all(
+                    Object.keys(REPO_CONFIGS).map(async (repoName) => {
+                        const response = await fetch(`http://localhost:7779/indexer/status/${repoName}`)
+                        if (!response.ok) {
+                            throw new Error(`Failed to fetch status for ${repoName}`)
+                        }
+                        const status = await response.json()
+                        return {
+                            name: repoName,
+                            ...status
+                        }
+                    })
+                )
+
+                // Transform into comparison format
+                const comparisonData = statuses.map(status => ({
+                    name: status.name,
+                    in_container: true, // Since it's in REPO_CONFIGS
+                    in_qdrant: status.status !== 'not_started',
+                    indexing_status: status.status,
+                    indexed_files: status.processed_count,
+                    total_files: status.total_files,
+                    last_indexed: status.last_updated
+                }))
+
+                setComparison(comparisonData)
             } catch (error) {
                 console.error('Error fetching comparison:', error)
                 setError('Failed to fetch comparison data')
@@ -51,7 +84,7 @@ export function IndexingComparison() {
             case 'failed':
                 return <XCircle className="size-4 text-red-500"/>
             default:
-                return null
+                return <CheckCircle className="size-4 text-gray-500"/>
         }
     }
 
@@ -85,10 +118,14 @@ export function IndexingComparison() {
                                 {comparison.map((repo) => (
                                     <TableRow key={repo.name}>
                                         <TableCell className="font-medium">{repo.name}</TableCell>
-                                        <TableCell>{repo.in_container ? <CheckCircle className="size-4 text-green-500"/> :
-                                            <XCircle className="size-4 text-red-500"/>}</TableCell>
-                                        <TableCell>{repo.in_qdrant ? <CheckCircle className="size-4 text-green-500"/> :
-                                            <XCircle className="size-4 text-red-500"/>}</TableCell>
+                                        <TableCell>{repo.in_container ?
+                                            <CheckCircle className="size-4 text-green-500"/> :
+                                            <XCircle className="size-4 text-red-500"/>}
+                                        </TableCell>
+                                        <TableCell>{repo.in_qdrant ?
+                                            <CheckCircle className="size-4 text-green-500"/> :
+                                            <XCircle className="size-4 text-red-500"/>}
+                                        </TableCell>
                                         <TableCell>
                                             <div className="flex items-center gap-2">
                                                 {getStatusIcon(repo.indexing_status)}

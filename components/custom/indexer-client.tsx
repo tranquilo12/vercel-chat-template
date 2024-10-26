@@ -1,11 +1,11 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import {useEffect, useState} from 'react'
 
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {Alert, AlertDescription, AlertTitle} from "@/components/ui/alert"
+import {Button} from "@/components/ui/button"
+import {Progress} from "@/components/ui/progress"
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from "@/components/ui/select"
 
 export default function IndexerClient() {
     const [repositories, setRepositories] = useState<string[]>([])
@@ -13,20 +13,41 @@ export default function IndexerClient() {
     const [indexingStatus, setIndexingStatus] = useState<any>(null)
     const [error, setError] = useState<string | null>(null)
 
+    // Based on your Python backend's repo_configs.py
+    const REPO_CONFIGS = {
+        "IntoTheDeep": {
+            "path": "/volumes/IntoTheDeep",
+            "language": "python"
+        },
+        "ParationalAddOn": {
+            "path": "/volumes/ParationalAddOn",
+            "language": "typescript"
+        }
+    }
+
     useEffect(() => {
         fetchRepositories()
     }, [])
 
     useEffect(() => {
         if (selectedRepo) {
-            const eventSource = new EventSource(`/api/indexer/sse?repo=${selectedRepo}`)
+            const eventSource = new EventSource(`http://localhost:7779/indexer/sse?repo=${selectedRepo}`)
 
-            eventSource.onmessage = (event) => {
-                const data = JSON.parse(event.data)
-                if (data.event === 'indexing_status') {
-                    setIndexingStatus(data.data)
+            eventSource.addEventListener('indexing_status', (event) => {
+                try {
+                    const data = JSON.parse(event.data)
+                    setIndexingStatus({
+                        status: data.status,
+                        message: data.message,
+                        progress: data.progress,
+                        current_file: data.current_file,
+                        processed_count: data.processed_count,
+                        total_files: data.total_files
+                    })
+                } catch (error) {
+                    console.error('Error parsing SSE data:', error)
                 }
-            }
+            })
 
             eventSource.onerror = (error) => {
                 console.error('EventSource failed:', error)
@@ -41,12 +62,13 @@ export default function IndexerClient() {
 
     const fetchRepositories = async () => {
         try {
-            const response = await fetch('/api/indexer?path=repos')
+            const response = await fetch('http://localhost:7779/indexer/status')
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`)
             }
             const data = await response.json()
-            setRepositories(data.repositories || [])
+            const repos = Object.keys(REPO_CONFIGS || {})
+            setRepositories(repos)
         } catch (error) {
             console.error('Error fetching repositories:', error)
             setError('Failed to fetch repositories')
@@ -58,33 +80,25 @@ export default function IndexerClient() {
         if (!selectedRepo) return
 
         try {
+            // Reset current status
             setIndexingStatus({
                 status: 'in_progress',
                 message: 'Starting indexing process...',
-                last_updated: Date.now(),
-                files_to_index: [],
+                progress: 0,
                 current_file: '',
-                processed_files: [],
-                total_files: null,
-                processed_count: 0
+                processed_count: 0,
+                total_files: 0
             })
 
-            const response = await fetch(`/api/indexer/index/${selectedRepo}`, { method: 'POST' })
+            const response = await fetch(`http://localhost:7779/indexer/${selectedRepo}`, {
+                method: 'POST'
+            })
+
             if (!response.ok) throw new Error('Failed to start indexing')
 
             const result = await response.json()
-            if (result.status === 'no_changes') {
-                setIndexingStatus({
-                    status: 'completed',
-                    message: 'No changes detected. Indexing not required.',
-                    last_updated: Date.now(),
-                    files_to_index: [],
-                    current_file: '',
-                    processed_files: [],
-                    total_files: 0,
-                    processed_count: 0
-                })
-            }
+            console.log('Indexing started:', result)
+
         } catch (error) {
             console.error('Error starting indexing:', error)
             setError('Failed to start indexing')
@@ -92,24 +106,53 @@ export default function IndexerClient() {
         }
     }
 
+    const getProgressPercentage = () => {
+        if (!indexingStatus?.total_files) return 0
+        return (indexingStatus.processed_count / indexingStatus.total_files) * 100
+    }
+
     const renderStatusMessage = () => {
         if (!indexingStatus) return null
 
         if (indexingStatus.status === 'completed' && indexingStatus.total_files === 0) {
-            return <p className="text-sm text-green-500">No changes detected. Indexing not required.</p>
+            return (
+                <Alert>
+                    <AlertTitle>Completed</AlertTitle>
+                    <AlertDescription>No changes detected. Indexing not required.</AlertDescription>
+                </Alert>
+            )
         }
 
         if (indexingStatus.status === 'in_progress') {
             return (
-                <>
-                    <Progress value={(indexingStatus.processed_count / (indexingStatus.total_files || 1)) * 100} className="w-full" />
-                    <p className="text-sm text-gray-500">
-                        {indexingStatus.processed_count} / {indexingStatus.total_files ?? 'Unknown'} files processed
-                    </p>
-                    {indexingStatus.current_file && (
-                        <p className="text-sm text-gray-500">Current file: {indexingStatus.current_file}</p>
-                    )}
-                </>
+                <div className="space-y-2">
+                    <Progress value={getProgressPercentage()} className="w-full"/>
+                    <div className="text-sm text-gray-500 space-y-1">
+                        <p>Status: {indexingStatus.message}</p>
+                        <p>Progress: {indexingStatus.processed_count} / {indexingStatus.total_files || '?'} files</p>
+                        {indexingStatus.current_file && (
+                            <p>Current file: {indexingStatus.current_file}</p>
+                        )}
+                    </div>
+                </div>
+            )
+        }
+
+        if (indexingStatus.status === 'failed') {
+            return (
+                <Alert variant="destructive">
+                    <AlertTitle>Error</AlertTitle>
+                    <AlertDescription>{indexingStatus.message}</AlertDescription>
+                </Alert>
+            )
+        }
+
+        if (indexingStatus.status === 'completed') {
+            return (
+                <Alert>
+                    <AlertTitle>Success</AlertTitle>
+                    <AlertDescription>{indexingStatus.message}</AlertDescription>
+                </Alert>
             )
         }
 
@@ -121,7 +164,7 @@ export default function IndexerClient() {
             <div className="flex items-center space-x-2">
                 <Select value={selectedRepo} onValueChange={setSelectedRepo}>
                     <SelectTrigger className="flex-grow">
-                        <SelectValue placeholder="Select a repository" />
+                        <SelectValue placeholder="Select a repository"/>
                     </SelectTrigger>
                     <SelectContent>
                         {repositories.map((repo) => (
@@ -131,14 +174,17 @@ export default function IndexerClient() {
                         ))}
                     </SelectContent>
                 </Select>
-                <Button onClick={startIndexing} disabled={!selectedRepo || indexingStatus?.status === 'in_progress'}>
+                <Button
+                    onClick={startIndexing}
+                    disabled={!selectedRepo || indexingStatus?.status === 'in_progress'}
+                >
                     Start Indexing
                 </Button>
             </div>
 
             {renderStatusMessage()}
 
-            {error && (
+            {error && !indexingStatus && (
                 <Alert variant="destructive">
                     <AlertTitle>Error</AlertTitle>
                     <AlertDescription>{error}</AlertDescription>
