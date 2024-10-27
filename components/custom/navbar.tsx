@@ -24,7 +24,7 @@ export const Navbar = async () => {
                 </div>
 
                 <div className="flex items-center space-x-2">
-                    <IndexingComparison/>
+                    {session?.user && <IndexingComparison />}
 
                     {session ? (
                         <DropdownMenu>

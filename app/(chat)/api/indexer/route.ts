@@ -1,7 +1,16 @@
 // app/api/indexer/route.ts
 import {NextResponse} from 'next/server'
 
+import {auth} from '@/app/(auth)/auth'
+
+
 export async function GET(request: Request) {
+    // Check authentication
+    const session = await auth()
+    if (!session?.user) {
+        return NextResponse.json({error: 'Unauthorized'}, {status: 401})
+    }
+
     const {searchParams} = new URL(request.url)
     const path = searchParams.get('path')
     const repo = searchParams.get('repo')
@@ -60,6 +69,12 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    // Check authentication
+    const session = await auth()
+    if (!session?.user) {
+        return NextResponse.json({error: 'Unauthorized'}, {status: 401})
+    }
+
     const {searchParams} = new URL(request.url)
     const repo = searchParams.get('repo')
 
