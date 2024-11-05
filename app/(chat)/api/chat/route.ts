@@ -1,6 +1,6 @@
 import {convertToCoreMessages, Message, streamText} from "ai";
 
-import {difyModel} from "@/ai";
+import {localModel} from "@/ai";
 import {auth} from "@/app/(auth)/auth";
 import {deleteChatById, getChatById, saveChat} from "@/db/queries";
 
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
     const coreMessages = convertToCoreMessages(messages);
 
     const result = await streamText({
-        model: difyModel,
+        model: localModel,
         messages: coreMessages,
         maxSteps: 5,
         onFinish: async ({responseMessages}) => {
