@@ -1,24 +1,22 @@
-import {convertToCoreMessages, Message, streamText} from "ai";
+import {convertToCoreMessages, Message, StreamData, streamText} from 'ai';
 
-import {localModel} from "@/ai";
-import {auth} from "@/app/(auth)/auth";
-import {deleteChatById, getChatById, saveChat} from "@/db/queries";
+import {openaiModel} from '@/ai';
+import {auth} from '@/app/(auth)/auth';
+import {deleteChatById, getChatById, saveChat} from '@/db/queries';
 
-
-export async function POST(request: Request) {
-    const {id, messages}: { id: string; messages: Array<Message> } =
-        await request.json();
+export async function POST(req: Request) {
+    const {id, messages}: { id: string; messages: Array<Message> } = await req.json();
 
     const session = await auth();
-
     if (!session) {
-        return new Response("Unauthorized", {status: 401});
+        return new Response('Unauthorized', {status: 401});
     }
 
     const coreMessages = convertToCoreMessages(messages);
+    const data = new StreamData();
 
     const result = await streamText({
-        model: localModel,
+        model: openaiModel,
         messages: coreMessages,
         maxSteps: 5,
         onFinish: async ({responseMessages}) => {
@@ -30,21 +28,18 @@ export async function POST(request: Request) {
                         userId: session.user.id,
                     });
                 } catch (error) {
-                    console.error("Failed to save chat");
+                    console.error('Failed to save chat:', error);
                 }
             }
-        },
-        experimental_telemetry: {
-            isEnabled: false,
-            functionId: "stream-text",
-        },
+            await data.close();
+        }
     });
 
-    return result.toDataStreamResponse({});
+    return result.toDataStreamResponse();
 }
 
-export async function DELETE(request: Request) {
-    const {searchParams} = new URL(request.url);
+export async function DELETE(req: Request) {
+    const {searchParams} = new URL(req.url);
     const id = searchParams.get("id");
 
     if (!id) {
