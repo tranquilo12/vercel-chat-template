@@ -23,6 +23,108 @@ export const customMiddleware: Experimental_LanguageModelV1Middleware = {
         });
     },
 
+    wrapStream: async ({doStream, params: _params, model: _model}) => {
+        const streamResponse = await doStream();
+        let currentToolCall: Partial<LanguageModelV1FunctionToolCall> | null = null;
+        let accumulatedArgs = '';
+        let isInToolCall = false;
+        let hasShownCodeBlock = false;
+
+        return {
+            stream: new ReadableStream<LanguageModelV1StreamPart>({
+                async start(controller) {
+                    const reader = streamResponse.stream.getReader();
+
+                    try {
+                        while (true) {
+                            const {done, value} = await reader.read();
+
+                            if (done) {
+                                if (currentToolCall && accumulatedArgs) {
+                                    try {
+                                        if (!hasShownCodeBlock) {
+                                            controller.enqueue({
+                                                type: 'text-delta',
+                                                textDelta: '\n```\n'
+                                            });
+                                        }
+                                        const args = JSON.parse(accumulatedArgs) as InterpreterArgs;
+                                        const result = await executePythonCode(args);
+                                        controller.enqueue({
+                                            type: 'text-delta',
+                                            textDelta: '\nExecution Result:\n```\n' +
+                                                (result.success ? (result.output || 'Code executed successfully.') :
+                                                    `Error: ${result.error?.message}`) +
+                                                '\n```\n'
+                                        });
+                                    } catch (e) {
+                                        console.error('Final execution error:', e);
+                                        controller.enqueue({
+                                            type: 'text-delta',
+                                            textDelta: `\nError executing code: ${e}\n`
+                                        });
+                                    }
+                                }
+                                controller.enqueue({
+                                    type: 'finish',
+                                    finishReason: 'stop',
+                                    usage: {promptTokens: 0, completionTokens: 0}
+                                });
+                                break;
+                            }
+
+                            if (value.type === 'tool-call' || value.type === 'tool-call-delta') {
+                                if (!isInToolCall) {
+                                    isInToolCall = true;
+                                    currentToolCall = {
+                                        toolCallId: `call_${Date.now()}`,
+                                        toolCallType: 'function',
+                                        toolName: 'executePythonCode',
+                                        args: ''
+                                    };
+                                    controller.enqueue({
+                                        type: 'text-delta',
+                                        textDelta: '\nHere\'s the Python code:\n```python\n'
+                                    });
+                                }
+
+                                if (value.type === 'tool-call-delta' && value.argsTextDelta) {
+                                    accumulatedArgs += value.argsTextDelta;
+                                    try {
+                                        const partialArgs = JSON.parse(accumulatedArgs);
+                                        if (partialArgs.code && !hasShownCodeBlock) {
+                                            controller.enqueue({
+                                                type: 'text-delta',
+                                                textDelta: partialArgs.code
+                                            });
+                                            hasShownCodeBlock = true;
+                                        }
+                                    } catch (e) {
+                                        // Continue accumulating if JSON is incomplete
+                                    }
+                                }
+                            } else if (value.type === 'text-delta' && !isInToolCall) {
+                                controller.enqueue(value);
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Stream error:', error);
+                        controller.enqueue({
+                            type: 'error',
+                            error: error
+                        });
+                    } finally {
+                        reader.releaseLock();
+                        controller.close();
+                    }
+                }
+            }),
+            rawCall: streamResponse.rawCall,
+            rawResponse: streamResponse.rawResponse || {},
+            warnings: streamResponse.warnings || []
+        };
+    },
+
     wrapGenerate: async ({
                              doGenerate,
                              params: _params,
@@ -57,86 +159,5 @@ export const customMiddleware: Experimental_LanguageModelV1Middleware = {
         }
 
         return response;
-    },
-
-    wrapStream: async ({
-                           doStream,
-                           params: _params,
-                           model: _model
-                       }) => {
-        const streamResponse = await doStream();
-
-        return {
-            stream: new ReadableStream<LanguageModelV1StreamPart>({
-                async start(controller) {
-                    const reader = streamResponse.stream.getReader();
-
-                    try {
-                        while (true) {
-                            const {done, value} = await reader.read();
-
-                            if (done) {
-                                // Ensure we send a proper finish event before closing
-                                controller.enqueue({
-                                    type: 'finish',
-                                    finishReason: 'stop',
-                                    usage: {
-                                        promptTokens: 0,
-                                        completionTokens: 0
-                                    }
-                                });
-                                break;
-                            }
-
-                            if (value.type === 'tool-call' &&
-                                value.toolCallType === 'function' &&
-                                value.toolName === 'executePythonCode') {
-                                const args = JSON.parse(value.args) as InterpreterArgs;
-                                const result = await executePythonCode(args);
-
-                                // Ensure all required fields are defined
-                                controller.enqueue({
-                                    type: 'tool-call',
-                                    toolCallType: "function",
-                                    toolCallId: value.toolCallId || `call_${Date.now()}`,
-                                    toolName: value.toolName,
-                                    args: JSON.stringify({
-                                        code: args.code || '',
-                                        result: result || ''
-                                    })
-                                });
-
-                                // Send result as text
-                                controller.enqueue({
-                                    type: 'text-delta',
-                                    textDelta: `\nResult: ${JSON.stringify(result || '', null, 2)}`
-                                });
-                            } else {
-                                // Ensure we don't pass undefined values
-                                controller.enqueue({
-                                    ...value,
-                                });
-                            }
-                        }
-                    } catch (error) {
-                        console.error('Stream error:', error);
-                        // Ensure we send an error event
-                        controller.enqueue({
-                            type: 'error',
-                            error: error || new Error('Unknown error occurred')
-                        });
-                    } finally {
-                        reader.releaseLock();
-                        controller.close();
-                    }
-                }
-            }),
-            rawCall: {
-                rawPrompt: streamResponse.rawCall?.rawPrompt || '',
-                rawSettings: streamResponse.rawCall?.rawSettings || {}
-            },
-            rawResponse: streamResponse.rawResponse || {},
-            warnings: streamResponse.warnings || []
-        };
     }
 };

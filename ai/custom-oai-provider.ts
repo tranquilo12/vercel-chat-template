@@ -19,6 +19,7 @@ const customOpenAIProvider = {
         });
 
         const originalDoGenerate = model.doGenerate.bind(model);
+
         model.doGenerate = async (options) => {
             console.log('Starting function call with options:', JSON.stringify(options, null, 2));
             const response = await originalDoGenerate({
@@ -30,6 +31,7 @@ const customOpenAIProvider = {
                 }
             });
             console.log('Received response:', JSON.stringify(response, null, 2));
+
             if (response.toolCalls?.length) {
                 console.log('Tool calls detected:', JSON.stringify(response.toolCalls, null, 2));
                 const toolCall = response.toolCalls[0];
