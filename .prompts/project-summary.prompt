@@ -1,0 +1,241 @@
+# Summary of Changes to Vercel AI Chat Template with Tool Use
+
+## 1. Python Interpreter Tool Implementation
+
+### File: `/ai/python_interpreter.ts`
+
+This file implements the Python interpreter tool, which allows the AI to execute Python code.
+
+```typescript
+ import {LanguageModelV1FunctionTool} from '@ai-sdk/provider';import {LanguageModelV1FunctionTool} from '@ai-sdk/provider';
+import {JSONSchema7} from 'json-schema';
+
+// Type for our interpreter response
+export interface InterpreterResponse {
+  success: boolean;
+  output?: string;
+  error?: {
+    type: string;
+    message: string;
+  };
+}
+
+// Function schema for OpenAI/Claude
+export const pythonInterpreterTool: LanguageModelV1FunctionTool = {
+  type: 'function',
+  name: 'executePythonCode',
+  description: 'Execute Python code and return the output',
+  parameters: {
+    type: 'object',
+    required: ['code', 'output_format'],
+    properties: {
+      code: {
+        type: 'string',
+        description: 'The Python code to execute'
+      },
+      output_format: {
+        type: 'string',
+        enum: ['plain', 'rich', 'json'],
+        description: 'The format of the output'
+      },
+      timeout: {
+        type: 'number',
+        description: 'Timeout in seconds for code execution'
+      }
+    }
+  } as JSONSchema7
+};
+
+// Function to execute the Python code
+export async function executePythonCode(args: {
+  code: string;
+  output_format: 'plain' | 'rich' | 'json';
+  timeout?: number;
+}): Promise<InterpreterResponse> {
+  try {
+    const response = await fetch('http://localhost:8000/api/v1/execute', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(args)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      error: {
+        type: 'ExecutionError',
+        message: error instanceof Error ? error.message : 'Unknown error occurred'
+      }
+    };
+  }
+}
+```
+
+## 2. Custom Middleware Implementation
+
+### File: `/ai/custom-middleware.ts`
+
+This file defines the custom middleware that integrates the Python interpreter tool.
+
+```typescript
+ import { Experimental_LanguageModelV1Middleware } from "ai";import { Experimental_LanguageModelV1Middleware } from "ai";
+import { pythonInterpreterTool, executePythonCode } from "./python_interpreter";
+
+export const customMiddleware: Experimental_LanguageModelV1Middleware = {
+  tools: [pythonInterpreterTool],
+  toolCallHandler: async (toolCall, context) => {
+    if (toolCall.type === 'function' && toolCall.function.name === 'executePythonCode') {
+      const result = await executePythonCode(toolCall.function.arguments);
+      return JSON.stringify(result);
+    }
+    throw new Error(`Unknown tool: ${toolCall.type}`);
+  },
+};
+```
+
+## 3. AI Model Configuration
+
+### File: `/ai/index.ts`
+
+This file configures the OpenAI model with the custom middleware.
+
+```typescript
+ import { experimental_wrapLanguageModel as wrapLanguageModel } from "ai";import { experimental_wrapLanguageModel as wrapLanguageModel } from "ai";
+import { config } from "dotenv";
+import customOpenAIProvider from "@/ai/custom-oai-provider";
+import { customMiddleware } from "./custom-middleware";
+
+config({
+  path: ".env.development.local",
+});
+
+export const openaiModel = wrapLanguageModel({
+  model: customOpenAIProvider.languageModel("gpt-4"),
+  middleware: customMiddleware,
+});
+```
+
+## 4. Chat API Route Implementation
+
+### File: `/app/(chat)/api/chat/route.ts`
+
+This file implements the chat API route, integrating the Python interpreter tool and handling the chat stream.
+
+```typescript
+ import { StreamingTextResponse, Message, experimental_StreamData } from 'ai';import { StreamingTextResponse, Message, experimental_StreamData } from 'ai';
+import { experimental_wrapLanguageModel, streamText, convertToCoreMessages } from 'ai';
+import { openaiModel } from '@/ai';
+import { auth } from '@/app/(auth)/auth';
+import { deleteChatById, getChatById, saveChat } from '@/db/queries';
+import { pythonInterpreterTool, executePythonCode } from '@/ai/python_interpreter';
+
+export async function POST(request: Request) {
+  const { id, messages }: { id: string; messages: Array<Message> } = await request.json();
+
+  const session = await auth();
+
+  if (!session) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
+  const coreMessages = convertToCoreMessages(messages);
+
+  const data = new experimental_StreamData();
+
+  const wrappedModel = experimental_wrapLanguageModel({
+    model: openaiModel,
+    middleware: {
+      tools: [pythonInterpreterTool],
+      toolCallHandler: async (toolCall, context) => {
+        if (toolCall.type === 'function' && toolCall.function.name === 'executePythonCode') {
+          const result = await executePythonCode(toolCall.function.arguments);
+          return JSON.stringify(result);
+        }
+        throw new Error(`Unknown tool: ${toolCall.type}`);
+      },
+    },
+  });
+
+  const result = await streamText({
+    model: wrappedModel,
+    messages: coreMessages,
+    maxSteps: 5,
+    tools: {
+      executePythonCode: pythonInterpreterTool,
+    },
+    experimental_streamData: data,
+    onFinish: async ({ responseMessages }) => {
+      if (session.user && session.user.id) {
+        try {
+          await saveChat({
+            id,
+            messages: [...coreMessages, ...responseMessages],
+            userId: session.user.id,
+          });
+        } catch (error) {
+          console.error('Failed to save chat');
+        }
+      }
+    },
+  });
+
+  return new StreamingTextResponse(result.textStream, {}, data);
+}
+
+export async function DELETE(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+
+  if (!id) {
+    return new Response("Not Found", { status: 404 });
+  }
+
+  const session = await auth();
+
+  if (!session || !session.user) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  try {
+    const chat = await getChatById({ id });
+
+    if (chat.userId !== session.user.id) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    await deleteChatById({ id });
+
+    return new Response("Chat deleted", { status: 200 });
+  } catch (error) {
+    return new Response("An error occurred while processing your request", {
+      status: 500,
+    });
+  }
+}
+```
+
+## Summary of Changes
+
+1. We implemented a Python interpreter tool in `/ai/python_interpreter.ts`, which allows the AI to execute Python code.
+2. We created a custom middleware in `/ai/custom-middleware.ts` that integrates the Python interpreter tool.
+3. We updated the AI model configuration in `/ai/index.ts` to use the custom middleware.
+4. We modified the chat API route in `/app/(chat)/api/chat/route.ts` to:
+
+1. Use the wrapped model with the custom middleware
+2. Integrate the Python interpreter tool
+3. Handle tool calls within the stream
+4. Use `experimental_StreamData` for potential future enhancements
+
+These changes enable the AI chat template to use the Python interpreter tool during conversations, allowing it to execute Python code when needed. The implementation is designed to be extensible, allowing for the addition of more tools in the future if required.
+
+To test this implementation, ensure that:
+1. The Python interpreter endpoint ([http://localhost:8000/api/v1/execute](http://localhost:8000/api/v1/execute)) is running and accessible.
+2. All necessary dependencies are installed.
+3. The .env.development.local file is properly configured with the required API keys and settings.
