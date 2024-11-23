@@ -1,0 +1,223 @@
+# Next.js AI Chat Template - Backend Documentation
+
+## 1. Project Overview and Architecture
+
+### 1.1 System Architecture
+
+The Next.js AI Chat Template implements a modern, scalable architecture designed for AI-powered chat applications. The backend is structured around several key components:
+
+```mermaid
+graph TD
+    Client[Client Browser] --> NextJS[Next.js Server]
+    NextJS --> AuthService[Auth Service]
+    NextJS --> AIProviders[AI Providers]
+    NextJS --> FileSystem[File System]
+    NextJS --> Database[Database]
+
+    AIProviders --> OpenAI[OpenAI]
+    AIProviders --> Anthropic[Anthropic]
+    AIProviders --> Dify[Dify]
+```
+
+### 1.2 Core Backend Services
+
+1. **AI Provider Service**
+   - Multiple provider support
+   - Custom middleware for provider integration
+   - Tool integration system
+
+2. **File Handling Service**
+   - File upload management
+   - Document indexing
+   - File retrieval system
+
+3. **Chat Management Service**
+   - Message handling
+   - Stream processing
+   - History management
+
+### 1.3 Key Dependencies
+
+```json
+{
+  "ai": "latest version",
+  "@auth/core": "latest version",
+  "next": "14.x",
+  "drizzle-orm": "latest version"
+}
+```
+
+## 2. Core Features and Components
+
+### 2.1 Python Interpreter Integration
+
+The Python interpreter is implemented as a tool that can be used by the AI to execute Python code:
+
+```typescript
+export const pythonInterpreterTool = {
+  type: 'function',
+  name: 'executePythonCode',
+  description: 'Execute Python code and return the output',
+  parameters: {
+    type: 'object',
+    required: ['code', 'output_format'],
+    properties: {
+      code: { type: 'string' },
+      output_format: {
+        type: 'string',
+        enum: ['plain', 'rich', 'json']
+      }
+    }
+  }
+};
+```
+
+### 2.2 File Indexing System
+
+The indexing system provides document analysis and retrieval capabilities:
+
+- **Key Features**:
+  - Document upload and processing
+  - Content extraction
+  - Search functionality
+  - Real-time indexing status updates
+
+### 2.3 Chat Management
+
+The chat system implements:
+
+- Real-time message streaming
+- Message persistence
+- History tracking
+- Multi-modal content support
+
+## 3. AI Integration and Provider System
+
+### 3.1 Provider Architecture
+
+The system implements a flexible provider architecture that supports multiple AI providers:
+
+```typescript
+interface Provider {
+  languageModel: (modelId: string) => LanguageModel;
+  textEmbeddingModel?: (modelId: string) => EmbeddingModel<string>;
+}
+```
+
+### 3.2 Custom Middleware System
+
+The middleware system enables:
+
+1. **Tool Integration**
+   ```typescript
+   export const customMiddleware = {
+     transformParams: (options) => {...},
+     wrapGenerate: (options) => {...},
+     wrapStream: (options) => {...}
+   };
+   ```
+
+2. **Response Processing**
+   - Stream handling
+   - Error management
+   - Tool call processing
+
+### 3.3 Provider Implementations
+
+#### OpenAI Provider
+```typescript
+const customOpenAIProvider = {
+  languageModel: (modelId: string) => ({
+    doGenerate: async (options) => {...},
+    doStream: async (options) => {...}
+  })
+};
+```
+
+#### Anthropic Provider
+Similar structure with Anthropic-specific implementations.
+
+#### Dify Provider
+Custom implementation for Dify API integration.
+
+## 4. API Routes and Backend Services
+
+### 4.1 Chat API
+
+#### POST /api/chat
+Handles chat interactions:
+```typescript
+export async function POST(request: Request) {
+  // Authentication check
+  const session = await auth();
+  if (!session) return new Response('Unauthorized', { status: 401 });
+
+  // Message processing
+  const { id, messages } = await request.json();
+  const coreMessages = convertToCoreMessages(messages);
+
+  // Stream setup and response
+  const result = await streamText({
+    model: wrappedModel,
+    messages: coreMessages,
+    maxSteps: 5,
+    tools: { executePythonCode: pythonInterpreterTool }
+  });
+
+  return new StreamingTextResponse(result.textStream);
+}
+```
+
+### 4.2 File API
+
+#### POST /api/files/upload
+Handles file uploads:
+- Multipart form data processing
+- File validation
+- Storage management
+
+### 4.3 Indexer API
+
+#### GET /api/indexer
+Provides indexing status and management:
+```typescript
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const path = searchParams.get('path');
+
+  switch (path) {
+    case 'sse':
+      return handleSSEConnection();
+    case 'repos':
+      return handleRepoListing();
+    case 'comparison':
+      return handleComparison();
+    default:
+      return new Response('Invalid path', { status: 400 });
+  }
+}
+```
+
+### 4.4 Error Handling
+
+The backend implements comprehensive error handling:
+
+1. **Authentication Errors**
+   - 401 Unauthorized
+   - 403 Forbidden
+
+2. **Processing Errors**
+   - 400 Bad Request
+   - 422 Unprocessable Entity
+
+3. **Server Errors**
+   - 500 Internal Server Error
+   - Custom error responses
+
+## Implementation Notes
+
+1. All API routes implement proper authentication checks
+2. Streaming responses use the AI SDK's streaming capabilities
+3. Error handling is consistent across all endpoints
+4. File operations are properly sanitized and validated
+5. Provider switching is handled seamlessly

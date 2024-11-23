@@ -327,7 +327,7 @@ class CustomOpenAIModel implements LanguageModelV1 {
     }
 }
 
-export class CustomOpenAIProvider implements Provider {
+export class DifyProvider implements Provider {
     private baseURL: string;
     private apiKey: string;
 
@@ -349,6 +349,6 @@ export class CustomOpenAIProvider implements Provider {
 }
 
 export const createCustomOpenAI = (config: { baseURL: string; apiKey: string }) => {
-    const provider = new CustomOpenAIProvider(config);
+    const provider = new DifyProvider(config);
     return (modelId: string) => provider.languageModel(modelId);
 };
