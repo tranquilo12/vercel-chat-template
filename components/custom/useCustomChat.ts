@@ -116,8 +116,8 @@ export function useCustomChat({
     };
 
     useEffect(() => {
-        console.log('Chat ID:', id);
-        console.log('Current messages:', messages);
+        console.debug('Chat ID:', id);
+        console.debug('Current messages:', messages);
     }, [id, messages]);
 
     return {

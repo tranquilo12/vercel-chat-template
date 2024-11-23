@@ -9,7 +9,7 @@ export async function POST(req: Request) {
     const { chatId, messages, experimental_attachements } = body;
 
     // Add more detailed debug logging
-    console.log('Received POST request:', {
+    console.debug('Received POST request:', {
         chatId,
         hasId: !!chatId,
         bodyKeys: Object.keys(body),
@@ -23,7 +23,7 @@ export async function POST(req: Request) {
     }
 
     // Add session debug logging
-    console.log('Session info:', {
+    console.debug('Session info:', {
         hasSession: !!session,
         hasUser: !!session.user,
         userId: session.user?.id
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
             if (session.user && session.user.id) {
                 try {
                     // Add pre-save logging
-                    console.log('Attempting to save chat with:', {
+                    console.debug('Attempting to save chat with:', {
                         chatId,
                         messagesLength: [...coreMessages, ...responseMessages]?.length,
                         userId: session.user.id,
@@ -83,27 +83,24 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
     const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
 
+    const id = searchParams.get("id");
     if (!id) {
         return new Response("Not Found", { status: 404 });
     }
 
     const session = await auth();
-
     if (!session || !session.user) {
         return new Response("Unauthorized", { status: 401 });
     }
 
     try {
         const chat = await getChatById({ id });
-
         if (chat.userId !== session.user.id) {
             return new Response("Unauthorized", { status: 401 });
         }
 
         await deleteChatById({ id });
-
         return new Response("Chat deleted", { status: 200 });
     } catch (error) {
         return new Response("An error occurred while processing your request", {
