@@ -1,6 +1,6 @@
 "use client";
 
-import { Attachment, Message } from "ai";
+import { Attachment, Message, CreateMessage } from "ai";
 import { useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 
@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { CodeBlock } from "./CodeBlock";
 import { MultimodalInput } from "./multimodal-input";
 import { useCustomChat } from "./useCustomChat";
+import { Markdown } from "@/components/custom/markdown";
 
 function extractCodeBlocks(content: string) {
   const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
@@ -31,7 +32,11 @@ function MessageContent({ message }: { message: Message }) {
   const codeBlocks = extractCodeBlocks(message.content);
 
   if (codeBlocks.length === 0) {
-    return <div className="prose dark:prose-invert">{message.content}</div>;
+    return (
+      <div key={message.id} className="prose dark:prose-invert">
+        <Markdown>{message.content}</Markdown>
+      </div>
+    );
   }
 
   let lastIndex = 0;
@@ -41,9 +46,9 @@ function MessageContent({ message }: { message: Message }) {
     // Add text before code block
     if (block.index > lastIndex) {
       elements.push(
-        <div key={`text-${i}`} className="prose dark:prose-invert">
+        <Markdown key={`${message.id}-text-${i}`}>
           {message.content.slice(lastIndex, block.index)}
-        </div>
+        </Markdown>
       );
     }
 
@@ -78,13 +83,13 @@ function MessageContent({ message }: { message: Message }) {
   // Add remaining text after last code block
   if (lastIndex < message.content.length) {
     elements.push(
-      <div key="text-last" className="prose dark:prose-invert">
+      <Markdown key={`${message.id}-text-last`}>
         {message.content.slice(lastIndex)}
-      </div>
+      </Markdown>
     );
   }
 
-  return <>{elements}</>;
+  return <div key={message.id}>{elements}</div>;
 }
 
 export function Chat({
@@ -95,7 +100,7 @@ export function Chat({
   initialMessages: Array<Message>;
 }) {
   const chatId = id || uuidv4();
-  
+
   const {
     messages,
     handleSubmit,
@@ -118,7 +123,7 @@ export function Chat({
   return (
     <div className="flex flex-col h-full">
       <div
-        className="flex-1 overflow-y-auto pb-[200px] pt-4 md:pt-10"
+        className="flex-1 overflow-y-auto pb-[200px] pt-16 md:pt-20"
         ref={messagesContainerRef}
       >
         {messages.length > 0 ? (
@@ -182,9 +187,11 @@ export function Chat({
               attachments={attachments}
               setAttachments={setAttachments}
               messages={messages}
-              append={append}
+              append={async (message: Message | CreateMessage) => {
+                await append(message as Message);
+                return null;
+              }}
               handleSubmit={handleSubmit}
-              id={inputId}
             />
           </div>
         </div>

@@ -90,9 +90,15 @@ export function useCustomChat({
                     setMessages(prevMessages => {
                         const lastMessage = prevMessages[prevMessages.length - 1];
                         if (lastMessage.id === aiMessage.id) {
+                            // Sanitize newContent to handle markdown properly
+                            const sanitizedContent = newContent
+                                .replace(/\\n/g, '\n')  // Replace escaped newlines
+                                .replace(/\\/g, '')     // Remove remaining escapes
+                                .replace(/```$/, '');   // Remove trailing backticks at the end of the stream
+
                             return [
                                 ...prevMessages.slice(0, -1),
-                                { ...lastMessage, content: lastMessage.content + newContent }
+                                { ...lastMessage, content: lastMessage.content + sanitizedContent }
                             ];
                         }
                         return prevMessages;
