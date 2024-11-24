@@ -2,6 +2,7 @@ import { Message } from "ai";
 import { useState, useEffect, useRef } from "react";
 import { v4 as uuidv4 } from 'uuid';
 import { ChatRequestOptions } from "ai";
+import { readDataStream, StreamPart } from 'ai';
 
 export function useCustomChat({
     initialMessages,
@@ -68,41 +69,92 @@ export function useCustomChat({
 
             // Handle the stream
             const reader = response.body?.getReader();
-            const decoder = new TextDecoder();
 
             if (reader) {
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
+                // Use readDataStream to parse the stream
+                const stream = readDataStream(reader);
 
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
+                for await (const part of stream) {
+                    if (part.type === 'text') {
+                        // Handle text updates
+                        const textDelta = part.value;
+                        // Update the AI message content
+                        setMessages(prevMessages => {
+                            const lastMessage = prevMessages[prevMessages.length - 1];
+                            if (lastMessage.id === aiMessage.id) {
+                                return [
+                                    ...prevMessages.slice(0, -1),
+                                    { ...lastMessage, content: lastMessage.content + textDelta },
+                                ];
+                            }
+                            return prevMessages;
+                        });
+                    } else if (part.type === 'tool_call') {
+                        // Handle tool calls
+                        const toolCall = {
+                            toolCallId: part.value.toolCallId,
+                            toolName: part.value.toolName,
+                            args: JSON.parse(part.value.args),
+                            state: 'call' as const,
+                        };
 
-                    let newContent = '';
-                    for (const line of lines) {
-                        if (line.startsWith('0:')) {
-                            const content = line.slice(2).replace(/^"|"$/g, '');
-                            newContent += content;
-                        }
+                        setMessages(prevMessages => {
+                            const lastMessage = prevMessages[prevMessages.length - 1];
+                            if (lastMessage.id === aiMessage.id) {
+                                return [
+                                    ...prevMessages.slice(0, -1),
+                                    {
+                                        ...lastMessage,
+                                        toolInvocations: [
+                                            ...(lastMessage.toolInvocations || []),
+                                            toolCall,
+                                        ],
+                                    },
+                                ];
+                            }
+                            return prevMessages;
+                        });
+
+                        // Optionally, execute the tool and send back the result
+                        // This depends on how your application handles tool execution
+                    } else if (part.type === 'tool_result') {
+                        // Handle tool results
+                        const toolResult = {
+                            toolCallId: part.value.toolCallId,
+                            result: part.value.result,
+                            state: 'result' as const,
+                        };
+
+                        setMessages(prevMessages => {
+                            const lastMessage = prevMessages[prevMessages.length - 1];
+                            if (lastMessage && lastMessage.toolInvocations) {
+                                const updatedToolInvocations = lastMessage.toolInvocations.map(
+                                    invocation => {
+                                        if (invocation.toolCallId === toolResult.toolCallId) {
+                                            return { ...invocation, ...toolResult };
+                                        }
+                                        return invocation;
+                                    },
+                                );
+
+                                return [
+                                    ...prevMessages.slice(0, -1),
+                                    {
+                                        ...lastMessage,
+                                        toolInvocations: updatedToolInvocations,
+                                    },
+                                ];
+                            }
+                            return prevMessages;
+                        });
+                    } else if (part.type === 'error') {
+                        // Handle errors
+                        console.error('Stream error:', part.type);
+                    } else if (part.type === 'finish_message') {
+                        // Handle finish
+                        const { finishReason } = part.value;
+                        // Optionally, you can update the state or perform actions based on the finish reason
                     }
-
-                    // Update the AI message content
-                    setMessages(prevMessages => {
-                        const lastMessage = prevMessages[prevMessages.length - 1];
-                        if (lastMessage.id === aiMessage.id) {
-                            // Sanitize newContent to handle markdown properly
-                            const sanitizedContent = newContent
-                                .replace(/\\n/g, '\n')  // Replace escaped newlines
-                                .replace(/\\/g, '')     // Remove remaining escapes
-                                .replace(/```$/, '');   // Remove trailing backticks at the end of the stream
-
-                            return [
-                                ...prevMessages.slice(0, -1),
-                                { ...lastMessage, content: lastMessage.content + sanitizedContent }
-                            ];
-                        }
-                        return prevMessages;
-                    });
                 }
             }
 

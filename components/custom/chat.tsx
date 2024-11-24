@@ -52,32 +52,41 @@ function MessageContent({ message }: { message: Message }) {
       );
     }
 
-    // Add code block
-    const executionResult = message.toolInvocations?.find((tool) =>
-      tool.args.includes(block.code)
+    // Find matching tool invocation for this code block
+    const executionResult = message.toolInvocations?.find(
+      (tool) => tool.toolName === 'executePythonCode' && 
+      JSON.parse(tool.args).code === block.code
     );
 
+    // Add code block with execution result
     elements.push(
-      <CodeBlock
-        key={`code-${i}`}
-        code={block.code}
-        language={block.language}
-        executionResult={
-          executionResult?.state === "result"
-            ? {
-                output: executionResult.result,
-                error:
-                  typeof executionResult.result === "object" &&
-                  "error" in executionResult.result
-                    ? executionResult.result.error
-                    : undefined,
-              }
-            : undefined
-        }
-      />
+      <div key={`code-block-${i}`} className="my-4">
+        <CodeBlock
+          code={block.code}
+          language={block.language}
+          executionResult={
+            executionResult?.state === "result" ? {
+              output: typeof executionResult.result === 'string' 
+                ? executionResult.result 
+                : JSON.stringify(executionResult.result, null, 2),
+              error: typeof executionResult.result === 'object' &&
+                executionResult.result &&
+                'error' in executionResult.result
+                ? String(executionResult.result.error)
+                : undefined
+            } : undefined
+          }
+        />
+        {/* Show execution status */}
+        {executionResult?.state === "call" && (
+          <div className="text-sm text-muted-foreground mt-2 animate-pulse">
+            Executing code...
+          </div>
+        )}
+      </div>
     );
 
-    lastIndex = block.index + block.code.length + block.language.length + 6; // 6 for the ```\n and ```
+    lastIndex = block.index + block.code.length + block.language.length + 6;
   });
 
   // Add remaining text after last code block
@@ -127,7 +136,7 @@ export function Chat({
         ref={messagesContainerRef}
       >
         {messages.length > 0 ? (
-          messages.map((message, index) => (
+          messages.map((message) => (
             <div
               key={message.id}
               className={cn(
@@ -143,25 +152,39 @@ export function Chat({
                     : "bg-muted text-muted-foreground"
                 )}
               >
-                {/* Role indicator (User/Assistant) */}
+                {/* Role indicator */}
                 <div className="text-sm font-semibold">
                   {message.role === "user" ? "You" : "Assistant"}
                 </div>
 
-                {/* Message content with code blocks */}
+                {/* Message content with code blocks and tool results */}
                 <MessageContent message={message} />
 
-                {/* Tool execution status */}
-                {message.toolInvocations?.map((tool, toolIndex) => (
-                  <div
-                    key={tool.toolCallId}
-                    className="text-xs text-muted-foreground/80"
-                  >
-                    {tool.state === "call" && (
-                      <span>Executing {tool.toolName}...</span>
-                    )}
-                  </div>
-                ))}
+                {/* Tool execution status for non-code tools */}
+                {message.toolInvocations?.map((tool) => {
+                  // Skip Python code executions as they're handled in MessageContent
+                  if (tool.toolName === 'executePythonCode') return null;
+                  
+                  return (
+                    <div
+                      key={tool.toolCallId}
+                      className="text-xs text-muted-foreground/80"
+                    >
+                      {tool.state === "call" ? (
+                        <span>Executing {tool.toolName}...</span>
+                      ) : tool.state === "result" ? (
+                        <div className="mt-2">
+                          <div className="font-semibold">Tool Result:</div>
+                          <pre className="mt-1 p-2 bg-muted rounded-md overflow-x-auto">
+                            {typeof tool.result === 'string' 
+                              ? tool.result 
+                              : JSON.stringify(tool.result, null, 2)}
+                          </pre>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))

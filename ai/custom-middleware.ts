@@ -4,9 +4,9 @@ import {
     LanguageModelV1FunctionToolCall,
     LanguageModelV1StreamPart
 } from "@ai-sdk/provider";
-import {Experimental_LanguageModelV1Middleware} from "ai";
+import { Experimental_LanguageModelV1Middleware } from "ai";
 
-import {executePythonCode, InterpreterArgs, pythonInterpreterTool} from "./python-interpreter";
+import { executePythonCode, InterpreterArgs, pythonInterpreterTool } from "./python-interpreter";
 
 export const customMiddleware: Experimental_LanguageModelV1Middleware = {
     transformParams: (options: {
@@ -18,17 +18,16 @@ export const customMiddleware: Experimental_LanguageModelV1Middleware = {
             mode: {
                 type: 'regular',
                 tools: [pythonInterpreterTool],
-                toolChoice: {type: 'auto'}
+                toolChoice: { type: 'auto' }
             }
         });
     },
 
-    wrapStream: async ({doStream, params: _params, model: _model}) => {
+    wrapStream: async ({ doStream, params: _params, model: _model }) => {
         const streamResponse = await doStream();
         let currentToolCall: Partial<LanguageModelV1FunctionToolCall> | null = null;
         let accumulatedArgs = '';
         let isInToolCall = false;
-        let hasShownCodeBlock = false;
 
         return {
             stream: new ReadableStream<LanguageModelV1StreamPart>({
@@ -37,38 +36,57 @@ export const customMiddleware: Experimental_LanguageModelV1Middleware = {
 
                     try {
                         while (true) {
-                            const {done, value} = await reader.read();
-
+                            const { done, value } = await reader.read();
                             if (done) {
                                 if (currentToolCall && accumulatedArgs) {
                                     try {
-                                        if (!hasShownCodeBlock) {
-                                            controller.enqueue({
-                                                type: 'text-delta',
-                                                textDelta: '\n```\n'
-                                            });
-                                        }
                                         const args = JSON.parse(accumulatedArgs) as InterpreterArgs;
+
+                                        // Emit tool call start
+                                        controller.enqueue({
+                                            type: 'tool-call',
+                                            toolCallId: currentToolCall.toolCallId!,
+                                            toolName: 'executePythonCode',
+                                            toolCallType: 'function',
+                                            args: accumulatedArgs
+                                        });
+
+                                        // Execute the tool
                                         const result = await executePythonCode(args);
+
+                                        // Emit tool result
                                         controller.enqueue({
                                             type: 'text-delta',
-                                            textDelta: '\nExecution Result:\n```\n' +
-                                                (result.success ? (result.output || 'Code executed successfully.') :
+                                            textDelta: '\n```\n' +
+                                                (result.success ?
+                                                    (result.output || 'Code executed successfully.') :
                                                     `Error: ${result.error?.message}`) +
                                                 '\n```\n'
                                         });
-                                    } catch (e) {
-                                        console.error('Final execution error:', e);
+
+                                        // Emit metadata about the tool execution
                                         controller.enqueue({
-                                            type: 'text-delta',
-                                            textDelta: `\nError executing code: ${e}\n`
+                                            type: 'response-metadata',
+                                            id: currentToolCall.toolCallId,
+                                            timestamp: new Date(),
+                                            modelId: 'python-interpreter'
+                                        });
+                                    } catch (e) {
+                                        console.error('Tool execution error:', e);
+                                        controller.enqueue({
+                                            type: 'error',
+                                            error: e as Error
                                         });
                                     }
                                 }
+
                                 controller.enqueue({
                                     type: 'finish',
                                     finishReason: 'stop',
-                                    usage: {promptTokens: 0, completionTokens: 0}
+                                    usage: {
+                                        promptTokens: 0,
+                                        completionTokens: 0,
+                                    }
                                 });
                                 break;
                             }
@@ -82,22 +100,20 @@ export const customMiddleware: Experimental_LanguageModelV1Middleware = {
                                         toolName: 'executePythonCode',
                                         args: ''
                                     };
-                                    controller.enqueue({
-                                        type: 'text-delta',
-                                        textDelta: '\nHere\'s the Python code:\n```python\n'
-                                    });
                                 }
 
                                 if (value.type === 'tool-call-delta' && value.argsTextDelta) {
                                     accumulatedArgs += value.argsTextDelta;
+
+                                    // Try to parse accumulated args to see if we have complete JSON
                                     try {
-                                        const partialArgs = JSON.parse(accumulatedArgs);
-                                        if (partialArgs.code && !hasShownCodeBlock) {
+                                        const parsedArgs = JSON.parse(accumulatedArgs);
+                                        if (parsedArgs.code) {
+                                            // Emit the code as text
                                             controller.enqueue({
                                                 type: 'text-delta',
-                                                textDelta: partialArgs.code
+                                                textDelta: '\n```python\n' + parsedArgs.code + '\n```\n'
                                             });
-                                            hasShownCodeBlock = true;
                                         }
                                     } catch (e) {
                                         // Continue accumulating if JSON is incomplete
@@ -111,7 +127,7 @@ export const customMiddleware: Experimental_LanguageModelV1Middleware = {
                         console.error('Stream error:', error);
                         controller.enqueue({
                             type: 'error',
-                            error: error
+                            error: error as Error
                         });
                     } finally {
                         reader.releaseLock();
@@ -126,10 +142,10 @@ export const customMiddleware: Experimental_LanguageModelV1Middleware = {
     },
 
     wrapGenerate: async ({
-                             doGenerate,
-                             params: _params,
-                             model: _model
-                         }: {
+        doGenerate,
+        params: _params,
+        model: _model
+    }: {
         doGenerate: () => ReturnType<LanguageModelV1['doGenerate']>;
         params: LanguageModelV1CallOptions;
         model: LanguageModelV1;
