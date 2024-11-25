@@ -31,65 +31,35 @@ function extractCodeBlocks(content: string) {
 function MessageContent({ message }: { message: Message }) {
   const codeBlocks = extractCodeBlocks(message.content);
 
-  if (codeBlocks.length === 0) {
-    return (
-      <div key={message.id} className="prose dark:prose-invert">
-        <Markdown>{message.content}</Markdown>
+  // Show loading state for tool calls in progress
+  const pendingToolCalls = message.toolInvocations?.filter(
+    (tool) => tool.state === "partial-call"
+  );
+
+  return (
+    <>
+      <div className="prose dark:prose-invert">
+        {codeBlocks.length === 0 ? (
+          <Markdown>{message.content}</Markdown>
+        ) : (
+          <>
+            {codeBlocks.map((block, i) => (
+              <CodeBlock key={i} language={block.language} code={block.code} />
+            ))}
+          </>
+        )}
       </div>
-    );
-  }
 
-  let lastIndex = 0;
-  const elements: JSX.Element[] = [];
-
-  codeBlocks.forEach((block, i) => {
-    // Add text before code block
-    if (block.index > lastIndex) {
-      elements.push(
-        <Markdown key={`${message.id}-text-${i}`}>
-          {message.content.slice(lastIndex, block.index)}
-        </Markdown>
-      );
-    }
-
-    // Add code block
-    const executionResult = message.toolInvocations?.find((tool) =>
-      tool.args.includes(block.code)
-    );
-
-    elements.push(
-      <CodeBlock
-        key={`code-${i}`}
-        code={block.code}
-        language={block.language}
-        executionResult={
-          executionResult?.state === "result"
-            ? {
-                output: executionResult.result,
-                error:
-                  typeof executionResult.result === "object" &&
-                  "error" in executionResult.result
-                    ? executionResult.result.error
-                    : undefined,
-              }
-            : undefined
-        }
-      />
-    );
-
-    lastIndex = block.index + block.code.length + block.language.length + 6; // 6 for the ```\n and ```
-  });
-
-  // Add remaining text after last code block
-  if (lastIndex < message.content.length) {
-    elements.push(
-      <Markdown key={`${message.id}-text-last`}>
-        {message.content.slice(lastIndex)}
-      </Markdown>
-    );
-  }
-
-  return <div key={message.id}>{elements}</div>;
+      {pendingToolCalls?.map((tool) => (
+        <div
+          key={tool.toolCallId}
+          className="text-sm text-muted-foreground animate-pulse"
+        >
+          Executing code...
+        </div>
+      ))}
+    </>
+  );
 }
 
 export function Chat({

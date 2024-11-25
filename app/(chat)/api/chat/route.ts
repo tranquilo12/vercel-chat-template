@@ -6,16 +6,7 @@ import { deleteChatById, getChatById, saveChat } from '@/db/queries';
 
 export async function POST(req: Request) {
     const body = await req.json();
-    const { chatId, messages, experimental_attachements } = body;
-
-    // Add more detailed debug logging
-    console.debug('Received POST request:', {
-        chatId,
-        hasId: !!chatId,
-        bodyKeys: Object.keys(body),
-        messagesCount: messages?.length,
-        messagesSample: messages?.slice(0, 1)
-    });
+    const { chatId, messages } = body;
 
     const session = await auth();
     if (!session) {
@@ -36,28 +27,13 @@ export async function POST(req: Request) {
         model: openaiModel,
         messages: coreMessages,
         maxSteps: 5,
+        experimental_toolCallStreaming: true,
+        onChunk: async ({ chunk }) => {
+            data.append(chunk);
+        },
         onFinish: async ({ responseMessages }) => {
             if (session.user && session.user.id) {
                 try {
-                    // Add pre-save logging
-                    console.debug('Attempting to save chat with:', {
-                        chatId,
-                        messagesLength: [...coreMessages, ...responseMessages]?.length,
-                        userId: session.user.id,
-                        firstMessage: [...coreMessages, ...responseMessages][0]
-                    });
-
-                    // Validate all required fields
-                    if (!chatId) {
-                        throw new Error('Chat ID is missing');
-                    }
-                    if (!responseMessages) {
-                        throw new Error('Response messages are missing');
-                    }
-                    if (!session.user.id) {
-                        throw new Error('User ID is missing');
-                    }
-
                     await saveChat({
                         id: chatId,
                         messages: [...coreMessages, ...responseMessages],
@@ -65,17 +41,16 @@ export async function POST(req: Request) {
                     });
                 } catch (error) {
                     console.error('Failed to save chat:', error);
-                    // Add the error to the stream data if possible
                     data.append({
                         type: 'error',
-                        message: 'Failed to save chat'
+                        message: 'Failed to save chat',
                     });
                 }
             } else {
                 console.error('No valid session user for saving chat');
             }
             await data.close();
-        }
+        },
     });
 
     return result.toDataStreamResponse();
