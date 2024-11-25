@@ -7,9 +7,8 @@ import { v4 as uuidv4 } from "uuid";
 import { useScrollToBottom } from "@/components/custom/use-scroll-to-bottom";
 import { cn } from "@/lib/utils";
 
-import { CodeBlock } from "./CodeBlock";
 import { MultimodalInput } from "./multimodal-input";
-import { useCustomChat } from "./useCustomChat";
+import { useCustomChat, ExtendedMessage } from "./useCustomChat";
 import { Markdown } from "@/components/custom/markdown";
 
 function extractCodeBlocks(content: string) {
@@ -28,37 +27,28 @@ function extractCodeBlocks(content: string) {
   return blocks;
 }
 
-function MessageContent({ message }: { message: Message }) {
-  const codeBlocks = extractCodeBlocks(message.content);
-
-  // Show loading state for tool calls in progress
-  const pendingToolCalls = message.toolInvocations?.filter(
-    (tool) => tool.state === "partial-call"
-  );
-
+function MessageContent({ message }: { message: ExtendedMessage }) {
   return (
-    <>
-      <div className="prose dark:prose-invert">
-        {codeBlocks.length === 0 ? (
-          <Markdown>{message.content}</Markdown>
-        ) : (
-          <>
-            {codeBlocks.map((block, i) => (
-              <CodeBlock key={i} language={block.language} code={block.code} />
-            ))}
-          </>
-        )}
-      </div>
-
-      {pendingToolCalls?.map((tool) => (
-        <div
-          key={tool.toolCallId}
-          className="text-sm text-muted-foreground animate-pulse"
-        >
-          Executing code...
+    <div className="prose dark:prose-invert">
+      <Markdown>{message.content}</Markdown>
+      {message.toolInvocations?.map((tool) => (
+        <div key={tool.toolCallId} className="mt-2">
+          {tool.state === "call" && (
+            <div className="text-xs text-muted-foreground/80">
+              Executing {tool.toolName}...
+            </div>
+          )}
+          {tool.state === "result" && tool.args && (
+            <div className="mt-2 bg-muted/50 rounded-md p-4">
+              <div className="text-xs font-semibold mb-2">
+                Output from {tool.toolName}:
+              </div>
+              <Markdown>{tool.args}</Markdown>
+            </div>
+          )}
         </div>
       ))}
-    </>
+    </div>
   );
 }
 
@@ -67,7 +57,7 @@ export function Chat({
   initialMessages,
 }: {
   id: string;
-  initialMessages: Array<Message>;
+  initialMessages: Array<ExtendedMessage>;
 }) {
   const chatId = id || uuidv4();
 
@@ -120,18 +110,6 @@ export function Chat({
 
                 {/* Message content with code blocks */}
                 <MessageContent message={message} />
-
-                {/* Tool execution status */}
-                {message.toolInvocations?.map((tool, toolIndex) => (
-                  <div
-                    key={tool.toolCallId}
-                    className="text-xs text-muted-foreground/80"
-                  >
-                    {tool.state === "call" && (
-                      <span>Executing {tool.toolName}...</span>
-                    )}
-                  </div>
-                ))}
               </div>
             </div>
           ))

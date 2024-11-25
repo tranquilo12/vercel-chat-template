@@ -2,8 +2,168 @@ import { Message, ToolInvocation, ChatRequestOptions } from 'ai';
 import { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
-type ExtendedMessage = Message & {
-    toolInvocations?: ToolInvocation[];
+type CustomToolInvocation = ToolInvocation & {
+    state: 'call' | 'result';
+    output?: string;
+    argsTextDelta?: string;
+};
+
+export type ExtendedMessage = Message & {
+    toolInvocations?: CustomToolInvocation[];
+};
+
+const cleanStreamText = (text: string | undefined) => {
+    // Return empty string if text is undefined or null
+    if (!text) return '';
+
+    // Remove excessive quotes and unescape characters
+    return text
+        .replace(/"{2,}/g, '"')        // Replace multiple quotes with single quote
+        .replace(/\\n/g, '\n')         // Replace literal \n with newline
+        .replace(/\\"/g, '"')          // Replace escaped quotes with regular quotes
+        .replace(/^"|"$/g, '')         // Remove leading/trailing quotes
+        .replace(/(?<!\\)\\(?!["\\])/g, ''); // Remove single backslashes not escaping quotes
+};
+
+const processStreamLine = (
+    line: string,
+    aiMessage: ExtendedMessage,
+    setMessages: React.Dispatch<React.SetStateAction<ExtendedMessage[]>>
+) => {
+    if (!line) return;
+    
+    const [prefix, ...rest] = line.split(':');
+    const dataStr = rest.join(':');
+
+    switch (prefix) {
+        case '0': // text
+            try {
+                setMessages((prevMessages) => {
+                    const lastMessage = prevMessages[prevMessages.length - 1];
+                    return lastMessage.id === aiMessage.id
+                        ? [...prevMessages.slice(0, -1),
+                        { ...lastMessage, content: lastMessage.content + cleanStreamText(dataStr) }]
+                        : prevMessages;
+                });
+            } catch (error) {
+                console.error('Error processing message:', error);
+            }
+            break;
+
+        case 'b': // tool_call_streaming_start
+            const toolStartEvent = JSON.parse(dataStr);
+            const newToolInvocation: ToolInvocation = {
+                toolCallId: toolStartEvent.toolCallId,
+                toolName: toolStartEvent.toolName,
+                state: 'call',
+                args: '',
+            };
+            setMessages((prevMessages) => {
+                const lastMessage = prevMessages[prevMessages.length - 1];
+                return lastMessage.id === aiMessage.id
+                    ? [...prevMessages.slice(0, -1),
+                    {
+                        ...lastMessage,
+                        toolInvocations: [...(lastMessage.toolInvocations || []), newToolInvocation]
+                    }]
+                    : prevMessages;
+            });
+            break;
+
+        case 'c': // tool_call_delta
+            const deltaEvent = JSON.parse(dataStr);
+            setMessages((prevMessages) => {
+                const lastMessage = prevMessages[prevMessages.length - 1];
+                if (lastMessage.id !== aiMessage.id) return prevMessages;
+
+                const toolInvocations = lastMessage.toolInvocations || [];
+                const toolInvocationIndex = toolInvocations.findIndex(
+                    (invocation) => invocation.toolCallId === deltaEvent.toolCallId
+                );
+
+                if (toolInvocationIndex >= 0) {
+                    const currentInvocation = toolInvocations[toolInvocationIndex];
+                    const updatedArgs = (currentInvocation.args as string || '') + deltaEvent.argsTextDelta;
+
+                    const updatedInvocation = {
+                        ...currentInvocation,
+                        argsTextDelta: updatedArgs,
+                        args: updatedArgs,
+                    };
+
+                    const updatedToolInvocations = [...toolInvocations];
+                    updatedToolInvocations[toolInvocationIndex] = updatedInvocation;
+
+                    return [...prevMessages.slice(0, -1),
+                    { ...lastMessage, toolInvocations: updatedToolInvocations }];
+                }
+                return prevMessages;
+            });
+            break;
+
+        case 'e': // tool_call_finish
+            const finishEvent = JSON.parse(dataStr);
+            if (finishEvent.finishReason === 'tool-calls') {
+                setMessages((prevMessages) => {
+                    const lastMessage = prevMessages[prevMessages.length - 1];
+                    if (lastMessage.id !== aiMessage.id) return prevMessages;
+
+                    const updatedToolInvocations = lastMessage.toolInvocations?.map(invocation => ({
+                        ...invocation,
+                        state: 'result' as const,
+                    })) || [];
+
+                    return [...prevMessages.slice(0, -1),
+                    { ...lastMessage, toolInvocations: updatedToolInvocations }];
+                });
+            }
+            break;
+
+        case 'd': // finish_message
+            try {
+                const messageEvent = JSON.parse(dataStr);
+                setMessages((prevMessages) => {
+                    const lastMessage = prevMessages[prevMessages.length - 1];
+                    return lastMessage.id === aiMessage.id
+                        ? [...prevMessages.slice(0, -1),
+                        { ...lastMessage, content: lastMessage.content + cleanStreamText(messageEvent?.textDelta) }]
+                        : prevMessages;
+                });
+            } catch (error) {
+                console.error('Error processing text delta:', error);
+            }
+            break;
+
+        case 'a': // tool_result
+            try {
+                const resultEvent = JSON.parse(dataStr);
+                setMessages((prevMessages) => {
+                    const lastMessage = prevMessages[prevMessages.length - 1];
+                    if (lastMessage.id !== aiMessage.id) return prevMessages;
+
+                    const toolInvocations = lastMessage.toolInvocations || [];
+                    const toolInvocationIndex = toolInvocations.findIndex(
+                        (invocation) => invocation.toolCallId === resultEvent.toolCallId
+                    );
+
+                    if (toolInvocationIndex >= 0) {
+                        const updatedToolInvocations = [...toolInvocations];
+                        updatedToolInvocations[toolInvocationIndex] = {
+                            ...updatedToolInvocations[toolInvocationIndex],
+                            output: resultEvent.output,
+                            state: 'result' as const
+                        } as CustomToolInvocation;
+
+                        return [...prevMessages.slice(0, -1),
+                        { ...lastMessage, toolInvocations: updatedToolInvocations }];
+                    }
+                    return prevMessages;
+                });
+            } catch (error) {
+                console.error('Error processing tool output:', error);
+            }
+            break;
+    }
 };
 
 export function useCustomChat({
@@ -13,7 +173,7 @@ export function useCustomChat({
     initialMessages: Array<Message>;
     id: string;
 }) {
-    const [messages, setMessages] = useState<ExtendedMessage[]>(initialMessages);
+    const [messages, setMessages] = useState<ExtendedMessage[]>(initialMessages as ExtendedMessage[]);
     const [isLoading, setIsLoading] = useState(false);
     const [input, setInput] = useState('');
     const inputId = `chat-input-${id}`;
@@ -50,7 +210,7 @@ export function useCustomChat({
                 role: 'user',
                 content: input,
             };
-            setMessages((prevMessages) => [...prevMessages, userMessage]);
+            setMessages((prevMessages) => [...prevMessages, userMessage as ExtendedMessage]);
 
             const aiMessage: ExtendedMessage = {
                 id: uuidv4(),
@@ -85,199 +245,30 @@ export function useCustomChat({
             const decoder = new TextDecoder();
 
             if (reader) {
-                let doneReading = false;
                 let buffer = '';
-
+                
                 try {
-                    while (!doneReading) {
+                    while (true) {
                         const { done, value } = await reader.read();
-
-                        if (done) {
-                            doneReading = true;
-                            // Process any remaining buffer before breaking
-                            if (buffer.trim()) {
-                                const line = buffer.trim();
-                                const [prefix, ...rest] = line.split(':');
-                                const dataStr = rest.join(':');
-
-                                // Process the final line using the same prefix logic
-                                if (prefix === '0') {
-                                    setMessages((prevMessages) => {
-                                        const lastMessage = prevMessages[prevMessages.length - 1];
-                                        return lastMessage.id === aiMessage.id
-                                            ? [...prevMessages.slice(0, -1),
-                                            { ...lastMessage, content: lastMessage.content + dataStr }]
-                                            : prevMessages;
-                                    });
-                                } else if (prefix === 'b') {
-                                    const event = JSON.parse(dataStr);
-                                    const newToolInvocation: ToolInvocation = {
-                                        toolCallId: event.toolCallId,
-                                        toolName: event.toolName,
-                                        state: 'call',
-                                        args: '',
-                                    };
-                                    setMessages((prevMessages) => {
-                                        const lastMessage = prevMessages[prevMessages.length - 1];
-                                        return lastMessage.id === aiMessage.id
-                                            ? [...prevMessages.slice(0, -1),
-                                            {
-                                                ...lastMessage,
-                                                toolInvocations: [...(lastMessage.toolInvocations || []), newToolInvocation]
-                                            }]
-                                            : prevMessages;
-                                    });
-                                } else if (prefix === 'c') {
-                                    const event = JSON.parse(dataStr);
-                                    setMessages((prevMessages) => {
-                                        const lastMessage = prevMessages[prevMessages.length - 1];
-                                        if (lastMessage.id !== aiMessage.id) return prevMessages;
-
-                                        const toolInvocations = lastMessage.toolInvocations || [];
-                                        const toolInvocationIndex = toolInvocations.findIndex(
-                                            (invocation) => invocation.toolCallId === event.toolCallId
-                                        );
-
-                                        if (toolInvocationIndex >= 0) {
-                                            const currentInvocation = toolInvocations[toolInvocationIndex];
-                                            const updatedArgs = currentInvocation.args + event.argsTextDelta;
-
-                                            const updatedInvocation = {
-                                                ...currentInvocation,
-                                                argsTextDelta: updatedArgs,
-                                                args: JSON.parse(updatedArgs),
-                                            };
-
-                                            const updatedToolInvocations = [...toolInvocations];
-                                            updatedToolInvocations[toolInvocationIndex] = updatedInvocation;
-
-                                            return [...prevMessages.slice(0, -1),
-                                            { ...lastMessage, toolInvocations: updatedToolInvocations }];
-                                        }
-                                        return prevMessages;
-                                    });
-                                } else if (prefix === 'e') {
-                                    const event = JSON.parse(dataStr);
-                                    if (event.finishReason === 'tool-calls') {
-                                        setMessages((prevMessages) => {
-                                            const lastMessage = prevMessages[prevMessages.length - 1];
-                                            if (lastMessage.id !== aiMessage.id) return prevMessages;
-
-                                            // Update all tool invocations in the last message to mark them as complete
-                                            const updatedToolInvocations = lastMessage.toolInvocations?.map(invocation => ({
-                                                ...invocation,
-                                            })) || [];
-
-                                            return [...prevMessages.slice(0, -1),
-                                            { ...lastMessage, toolInvocations: updatedToolInvocations }];
-                                        });
-                                    }
-                                } else if (prefix === 'd') {
-                                    const event = JSON.parse(dataStr);
-                                    setMessages((prevMessages) => {
-                                        const lastMessage = prevMessages[prevMessages.length - 1];
-                                        return lastMessage.id === aiMessage.id
-                                            ? [...prevMessages.slice(0, -1),
-                                            { ...lastMessage, content: lastMessage.content + event.textDelta }]
-                                            : prevMessages;
-                                    });
-                                }
-                            }
-                            break;
-                        }
-
-                        buffer += decoder.decode(value || new Uint8Array(), { stream: true });
-
+                        
+                        // Append new data to buffer
+                        buffer += decoder.decode(value, { stream: !done });
+                        
+                        // Process complete lines from buffer
                         let newlineIndex;
                         while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
                             const line = buffer.slice(0, newlineIndex).trim();
                             buffer = buffer.slice(newlineIndex + 1);
-
-                            if (!line) continue; // Skip empty lines
-
-                            const [prefix, ...rest] = line.split(':');
-                            const dataStr = rest.join(':');
-
-                            // Use the same prefix handling logic as above
-                            if (prefix === '0') {
-                                setMessages((prevMessages) => {
-                                    const lastMessage = prevMessages[prevMessages.length - 1];
-                                    return lastMessage.id === aiMessage.id
-                                        ? [...prevMessages.slice(0, -1),
-                                        { ...lastMessage, content: lastMessage.content + dataStr }]
-                                        : prevMessages;
-                                });
-                            } else if (prefix === 'b') {
-                                const event = JSON.parse(dataStr);
-                                const newToolInvocation: ToolInvocation = {
-                                    toolCallId: event.toolCallId,
-                                    toolName: event.toolName,
-                                    state: 'call',
-                                    args: '',
-                                };
-                                setMessages((prevMessages) => {
-                                    const lastMessage = prevMessages[prevMessages.length - 1];
-                                    return lastMessage.id === aiMessage.id
-                                        ? [...prevMessages.slice(0, -1),
-                                        {
-                                            ...lastMessage,
-                                            toolInvocations: [...(lastMessage.toolInvocations || []), newToolInvocation]
-                                        }]
-                                        : prevMessages;
-                                });
-                            } else if (prefix === 'c') {
-                                const event = JSON.parse(dataStr);
-                                setMessages((prevMessages) => {
-                                    const lastMessage = prevMessages[prevMessages.length - 1];
-                                    if (lastMessage.id !== aiMessage.id) return prevMessages;
-
-                                    const toolInvocations = lastMessage.toolInvocations || [];
-                                    const toolInvocationIndex = toolInvocations.findIndex(
-                                        (invocation) => invocation.toolCallId === event.toolCallId
-                                    );
-
-                                    if (toolInvocationIndex >= 0) {
-                                        const currentInvocation = toolInvocations[toolInvocationIndex];
-                                        const updatedInvocation = {
-                                            ...currentInvocation,
-                                            argsTextDelta: event.argsTextDelta,
-                                        };
-
-                                        const updatedToolInvocations = [...toolInvocations];
-                                        updatedToolInvocations[toolInvocationIndex] = updatedInvocation;
-
-                                        return [...prevMessages.slice(0, -1),
-                                        { ...lastMessage, toolInvocations: updatedToolInvocations }];
-                                    }
-                                    return prevMessages;
-                                });
-                            } else if (prefix === 'e') {
-                                const event = JSON.parse(dataStr);
-                                if (event.finishReason === 'tool-calls') {
-                                    setMessages((prevMessages) => {
-                                        const lastMessage = prevMessages[prevMessages.length - 1];
-                                        if (lastMessage.id !== aiMessage.id) return prevMessages;
-
-                                        // Update all tool invocations in the last message to mark them as complete
-                                        const updatedToolInvocations = lastMessage.toolInvocations?.map(invocation => ({
-                                            ...invocation,
-                                            state: 'complete' as const
-                                        })) || [];
-
-                                        return [...prevMessages.slice(0, -1),
-                                        { ...lastMessage, toolInvocations: updatedToolInvocations }];
-                                    });
-                                }
-                            } else if (prefix === 'd') {
-                                const event = JSON.parse(dataStr);
-                                setMessages((prevMessages) => {
-                                    const lastMessage = prevMessages[prevMessages.length - 1];
-                                    return lastMessage.id === aiMessage.id
-                                        ? [...prevMessages.slice(0, -1),
-                                        { ...lastMessage, content: lastMessage.content + event.textDelta }]
-                                        : prevMessages;
-                                });
+                            
+                            processStreamLine(line, aiMessage, setMessages);
+                        }
+                        
+                        // Break the loop if we're done and process any remaining buffer
+                        if (done) {
+                            if (buffer.trim()) {
+                                processStreamLine(buffer.trim(), aiMessage, setMessages);
                             }
+                            break;
                         }
                     }
                 } finally {
