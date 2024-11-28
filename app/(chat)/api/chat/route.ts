@@ -1,8 +1,27 @@
-import { convertToCoreMessages, StreamData, streamText } from 'ai';
+/* eslint-disable import/order */
+import { convertToCoreMessages, CoreMessage, StreamData, streamText } from 'ai';
 
 import { openaiModel } from '@/ai';
 import { auth } from '@/app/(auth)/auth';
 import { deleteChatById, getChatById, saveChat } from '@/db/queries';
+import { z } from 'zod';
+
+// Define InterpreterArgs
+export interface InterpreterArgs {
+    code: string;
+    output_format: 'plain' | 'rich' | 'json';
+    timeout?: number;
+}
+
+// Type for our interpreter response
+export interface InterpreterResponse {
+    success: boolean;
+    output?: string;
+    error?: {
+        type: string;
+        message: string;
+    };
+}
 
 export async function POST(req: Request) {
     const body = await req.json();
@@ -13,30 +32,87 @@ export async function POST(req: Request) {
         return new Response('Unauthorized', { status: 401 });
     }
 
-    // Add session debug logging
-    console.debug('Session info:', {
-        hasSession: !!session,
-        hasUser: !!session.user,
-        userId: session.user?.id
-    });
-
-    const coreMessages = convertToCoreMessages(messages);
+    const coreMessages: CoreMessage[] = convertToCoreMessages(messages);
     const data = new StreamData();
 
     const result = await streamText({
         model: openaiModel,
         messages: coreMessages,
-        maxSteps: 5,
         experimental_toolCallStreaming: true,
+        tools: {
+            pythonInterpreterTool: {
+                name: 'executePythonCode',
+                description: 'Execute Python code and return the output',
+                parameters: z.object({
+                    code: z.string().describe('The Python code to execute'),
+                    output_format: z.enum(['plain', 'rich', 'json']).describe('The format of the output'),
+                    timeout: z.number().optional().describe('Timeout in seconds for code execution')
+                }),
+                execute: async ({ code, output_format, timeout }: InterpreterArgs): Promise<InterpreterResponse> => {
+                    try {
+                        const response = await fetch('http://localhost:8000/api/v1/execute', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ code, output_format, timeout })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
+                        return await response.json();
+                    } catch (error) {
+                        return {
+                            success: false,
+                            error: {
+                                type: 'ExecutionError',
+                                message: error instanceof Error ? error.message : 'Unknown error occurred'
+                            }
+                        };
+                    }
+                }
+            },
+        },
         onChunk: async ({ chunk }) => {
             data.append(chunk);
         },
-        onFinish: async ({ responseMessages }) => {
+        onFinish: async ({ steps, responseMessages }) => {
             if (session.user && session.user.id) {
                 try {
+                    // Convert responseMessages to include tool invocations
+                    const messagesWithTools = responseMessages.map(msg => ({
+                        ...msg,
+                        toolInvocations: steps
+                            ?.filter(step =>
+                                // Filter for steps that have tool calls
+                                step.stepType === 'initial' && step.toolCalls?.length > 0
+                            )
+                            .flatMap(step =>
+                                // Process each tool call in the step
+                                step.toolCalls?.map(toolCall => {
+                                    // Find corresponding tool result
+                                    const toolResult = steps.find(
+                                        resultStep =>
+                                            resultStep.stepType === 'tool-result' &&
+                                            resultStep.toolCalls?.find(resultToolCall => resultToolCall.toolCallId === toolCall.toolCallId)
+                                    );
+
+                                    return {
+                                        toolCallId: toolCall.toolCallId,
+                                        toolName: toolCall.toolName,
+                                        args: toolCall.args,
+                                        state: 'result',
+                                        result: toolResult?.toolResults || ''
+                                    };
+                                }) || []
+                            )
+                    }));
+
                     await saveChat({
-                        id: chatId,
-                        messages: [...coreMessages, ...responseMessages],
+                        id: chatId as string,
+                        messages: [...coreMessages, ...messagesWithTools],
                         userId: session.user.id,
                     });
                 } catch (error) {
@@ -53,7 +129,7 @@ export async function POST(req: Request) {
         },
     });
 
-    return result.toDataStreamResponse();
+    return result.toDataStreamResponse({ data });
 }
 
 export async function DELETE(req: Request) {

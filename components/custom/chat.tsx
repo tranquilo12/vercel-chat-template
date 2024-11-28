@@ -4,28 +4,12 @@ import { Attachment, Message, CreateMessage } from "ai";
 import { useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 
+import { Markdown } from "@/components/custom/markdown";
 import { useScrollToBottom } from "@/components/custom/use-scroll-to-bottom";
 import { cn } from "@/lib/utils";
 
 import { MultimodalInput } from "./multimodal-input";
 import { useCustomChat, ExtendedMessage } from "./useCustomChat";
-import { Markdown } from "@/components/custom/markdown";
-
-function extractCodeBlocks(content: string) {
-  const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
-  const blocks: Array<{ language: string; code: string; index: number }> = [];
-  let match;
-
-  while ((match = codeBlockRegex.exec(content)) !== null) {
-    blocks.push({
-      language: match[1] || "text",
-      code: match[2].trim(),
-      index: match.index,
-    });
-  }
-
-  return blocks;
-}
 
 function MessageContent({ message }: { message: ExtendedMessage }) {
   return (
@@ -38,12 +22,20 @@ function MessageContent({ message }: { message: ExtendedMessage }) {
               Executing {tool.toolName}...
             </div>
           )}
-          {tool.state === "result" && tool.args && (
+          {tool.state === "result" && (
             <div className="mt-2 bg-muted/50 rounded-md p-4">
               <div className="text-xs font-semibold mb-2">
                 Output from {tool.toolName}:
               </div>
-              <Markdown>{tool.args}</Markdown>
+              {tool.result?.success === false ? (
+                <div className="text-red-500">
+                  Error: {tool.result.error.message}
+                </div>
+              ) : (
+                <Markdown>
+                  {typeof tool.args === "object" ? tool.args.code : tool.args}
+                </Markdown>
+              )}
             </div>
           )}
         </div>
@@ -136,7 +128,7 @@ export function Chat({
               setAttachments={setAttachments}
               messages={messages}
               append={async (message: Message | CreateMessage) => {
-                await append(message as Message);
+                await append(message as ExtendedMessage);
                 return null;
               }}
               handleSubmit={handleSubmit}

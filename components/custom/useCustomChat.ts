@@ -2,10 +2,12 @@ import { Message, ToolInvocation, ChatRequestOptions } from 'ai';
 import { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
-type CustomToolInvocation = ToolInvocation & {
-    state: 'call' | 'result';
-    output?: string;
-    argsTextDelta?: string;
+type CustomToolInvocation = {
+    toolCallId: string;
+    toolName: string;
+    args: string;
+    state: 'call' | 'result' | 'partial-call';
+    result?: string;
 };
 
 export type ExtendedMessage = Message & {
@@ -31,7 +33,7 @@ const processStreamLine = (
     setMessages: React.Dispatch<React.SetStateAction<ExtendedMessage[]>>
 ) => {
     if (!line) return;
-    
+
     const [prefix, ...rest] = line.split(':');
     const dataStr = rest.join(':');
 
@@ -111,6 +113,7 @@ const processStreamLine = (
                     const updatedToolInvocations = lastMessage.toolInvocations?.map(invocation => ({
                         ...invocation,
                         state: 'result' as const,
+                        result: invocation.args || ''
                     })) || [];
 
                     return [...prevMessages.slice(0, -1),
@@ -150,9 +153,9 @@ const processStreamLine = (
                         const updatedToolInvocations = [...toolInvocations];
                         updatedToolInvocations[toolInvocationIndex] = {
                             ...updatedToolInvocations[toolInvocationIndex],
-                            output: resultEvent.output,
+                            result: resultEvent.output,
                             state: 'result' as const
-                        } as CustomToolInvocation;
+                        } as ToolInvocation & CustomToolInvocation;
 
                         return [...prevMessages.slice(0, -1),
                         { ...lastMessage, toolInvocations: updatedToolInvocations }];
@@ -205,20 +208,20 @@ export function useCustomChat({
 
         setIsLoading(true);
         try {
-            const userMessage: Message = {
+            const userMessage: ExtendedMessage = {
                 id: uuidv4(),
                 role: 'user',
                 content: input,
             };
-            setMessages((prevMessages) => [...prevMessages, userMessage as ExtendedMessage]);
 
             const aiMessage: ExtendedMessage = {
                 id: uuidv4(),
                 role: 'assistant',
                 content: '',
-                toolInvocations: [],
+                tool_calls: [],
             };
-            setMessages((prevMessages) => [...prevMessages, aiMessage]);
+
+            setMessages(prev => [...prev, userMessage, aiMessage]);
 
             const payload = {
                 chatId: id,
@@ -235,34 +238,33 @@ export function useCustomChat({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
                 signal: (abortControllerRef.current = new AbortController()).signal,
+            }).then(res => {
+                if (!res.ok) throw new Error(res.statusText);
+                return res;
             });
-
-            if (!response.ok) {
-                throw new Error(response.statusText);
-            }
 
             const reader = response.body?.getReader();
             const decoder = new TextDecoder();
 
             if (reader) {
                 let buffer = '';
-                
+
                 try {
                     while (true) {
                         const { done, value } = await reader.read();
-                        
+
                         // Append new data to buffer
                         buffer += decoder.decode(value, { stream: !done });
-                        
+
                         // Process complete lines from buffer
                         let newlineIndex;
                         while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
                             const line = buffer.slice(0, newlineIndex).trim();
                             buffer = buffer.slice(newlineIndex + 1);
-                            
+
                             processStreamLine(line, aiMessage, setMessages);
                         }
-                        
+
                         // Break the loop if we're done and process any remaining buffer
                         if (done) {
                             if (buffer.trim()) {

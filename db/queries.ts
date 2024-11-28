@@ -1,11 +1,13 @@
 "server-only";
 
+import { AssistantMessage, CoreMessage, FilePart, TextPart , ImagePart } from "ai";
 import { genSaltSync, hashSync } from "bcrypt-ts";
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import { chat, user, User } from "./schema";
+
 
 // Optionally, if not using email/pass login, you can
 // use the Drizzle adapter for Auth.js / NextAuth
@@ -40,7 +42,7 @@ export async function saveChat({
     userId,
 }: {
     id: string;
-    messages: any;
+    messages: CoreMessage[] | AssistantMessage[];
     userId: string;
 }) {
     if (!id || !messages || !userId) {
