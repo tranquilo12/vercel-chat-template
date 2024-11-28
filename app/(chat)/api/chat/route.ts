@@ -41,7 +41,6 @@ export async function POST(req: Request) {
         experimental_toolCallStreaming: true,
         tools: {
             pythonInterpreterTool: {
-                name: 'executePythonCode',
                 description: 'Execute Python code and return the output',
                 parameters: z.object({
                     code: z.string().describe('The Python code to execute'),
@@ -56,11 +55,12 @@ export async function POST(req: Request) {
                                 'Content-Type': 'application/json',
                             },
                             body: JSON.stringify({ code, output_format, timeout })
+                        }).then(res => {
+                            if (!res.ok) {
+                                throw new Error(`HTTP error! status: ${res.status}`);
+                            }
+                            return res.json();
                         });
-
-                        if (!response.ok) {
-                            throw new Error(`HTTP error! status: ${response.status}`);
-                        }
 
                         return await response.json();
                     } catch (error) {

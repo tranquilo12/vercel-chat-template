@@ -13,33 +13,74 @@ import { useCustomChat, ExtendedMessage } from "./useCustomChat";
 
 function MessageContent({ message }: { message: ExtendedMessage }) {
   return (
-    <div className="prose dark:prose-invert">
-      <Markdown>{message.content}</Markdown>
+    <div className="prose dark:prose-invert space-y-4">
+      {/* Message Content Section */}
+      {message.content && (
+        <div className="border-l-2 border-primary/20 pl-4">
+          {/* <div className="text-xs text-muted-foreground mb-2">Content</div> */}
+          <Markdown>{message.content}</Markdown>
+        </div>
+      )}
+
+      {/* Tool Invocations Section */}
       {message.toolInvocations?.map((tool) => (
-        <div key={tool.toolCallId} className="mt-2">
+        <div key={tool.toolCallId} className="space-y-2">
           {tool.state === "call" && (
-            <div className="text-xs text-muted-foreground/80">
+            <div className="text-xs text-muted-foreground/80 italic">
               Executing {tool.toolName}...
             </div>
           )}
+
           {tool.state === "result" && (
-            <div className="mt-2 bg-muted/50 rounded-md p-4">
-              <div className="text-xs font-semibold mb-2">
-                Output from {tool.toolName}:
-              </div>
-              {tool.result?.success === false ? (
-                <div className="text-red-500">
-                  Error: {tool.result.error.message}
-                </div>
-              ) : (
-                <Markdown>
-                  {typeof tool.args === "object" ? tool.args.code : tool.args}
-                </Markdown>
+            <div className="space-y-2">
+              {/* Code Section */}
+              {tool.args && (
+                <details className="border rounded-md">
+                  <summary className="text-xs font-medium px-4 py-2 cursor-pointer hover:bg-muted/50">
+                    Code from {tool.toolName}
+                  </summary>
+                  <div className="px-4 py-2 bg-muted/30">
+                    <Markdown>
+                      {`\`\`\`python
+${typeof tool.args === "object" ? tool.args.code : tool.args}
+\`\`\``}
+                    </Markdown>
+                  </div>
+                </details>
               )}
+
+              {/* Output Section */}
+              <details className="border rounded-md" open>
+                <summary className="text-xs font-medium px-4 py-2 cursor-pointer hover:bg-muted/50">
+                  Output from {tool.toolName}
+                </summary>
+                <div className="px-4 py-2 bg-muted/30">
+                  {tool.result?.success === false ? (
+                    <div className="text-red-500 text-sm">
+                      Error: {tool.result.error.message}
+                    </div>
+                  ) : tool.result ? (
+                    <Markdown>
+                      {tool.result.output || "No output provided"}
+                    </Markdown>
+                  ) : (
+                    <div className="text-muted-foreground text-sm italic">
+                      No result available
+                    </div>
+                  )}
+                </div>
+              </details>
             </div>
           )}
         </div>
       ))}
+
+      {/* Empty State */}
+      {!message.content && !message.toolInvocations?.length && (
+        <div className="text-muted-foreground text-sm italic">
+          Empty message
+        </div>
+      )}
     </div>
   );
 }
