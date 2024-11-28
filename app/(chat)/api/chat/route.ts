@@ -1,5 +1,5 @@
 /* eslint-disable import/order */
-import { convertToCoreMessages, CoreMessage, StreamData, streamText } from 'ai';
+import { convertToCoreMessages, CoreMessage, JSONValue, StreamData, streamText } from 'ai';
 
 import { openaiModel } from '@/ai';
 import { auth } from '@/app/(auth)/auth';
@@ -76,7 +76,7 @@ export async function POST(req: Request) {
             },
         },
         onChunk: async ({ chunk }) => {
-            data.append(chunk);
+            data.append(chunk as JSONValue);
         },
         onFinish: async ({ steps, responseMessages }) => {
             if (session.user && session.user.id) {
