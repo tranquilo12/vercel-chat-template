@@ -1,0 +1,115 @@
+.
+├── LICENSE
+├── README.md
+├── ai
+│   ├── anthropic-provider.ts
+│   ├── custom-middleware.ts
+│   ├── custom-oai-provider.ts
+│   ├── dify-provider.ts
+│   └── index.ts
+├── app
+│   ├── (auth)
+│   │   ├── actions.ts
+│   │   ├── api
+│   │   │   └── auth
+│   │   │       └── [...nextauth]
+│   │   ├── auth.config.ts
+│   │   ├── auth.ts
+│   │   ├── login
+│   │   │   └── page.tsx
+│   │   └── register
+│   │       └── page.tsx
+│   ├── (chat)
+│   │   ├── api
+│   │   │   ├── chat
+│   │   │   │   └── route.ts
+│   │   │   ├── files
+│   │   │   │   └── upload
+│   │   │   ├── history
+│   │   │   │   └── route.ts
+│   │   │   └── indexer
+│   │   │       └── route.ts
+│   │   ├── chat
+│   │   │   └── [id]
+│   │   │       └── page.tsx
+│   │   ├── opengraph-image.png
+│   │   ├── page.tsx
+│   │   └── twitter-image.png
+│   ├── favicon.ico
+│   ├── globals.css
+│   └── layout.tsx
+├── components
+│   ├── ThemeProvider.tsx
+│   ├── custom
+│   │   ├── CodeBlock.tsx
+│   │   ├── auth-form.tsx
+│   │   ├── chat.tsx
+│   │   ├── history.tsx
+│   │   ├── icons.tsx
+│   │   ├── indexer-client.tsx
+│   │   ├── indexing-comparison.tsx
+│   │   ├── indexing-status-dropdown.tsx
+│   │   ├── markdown.tsx
+│   │   ├── message.tsx
+│   │   ├── multimodal-input.tsx
+│   │   ├── navbar.tsx
+│   │   ├── overview.tsx
+│   │   ├── preview-attachment.tsx
+│   │   ├── submit-button.tsx
+│   │   ├── theme-provider.tsx
+│   │   ├── theme-toggle.tsx
+│   │   ├── use-scroll-to-bottom.ts
+│   │   ├── use-window-size.tsx
+│   │   ├── useCustomChat.ts
+│   │   └── weather.tsx
+│   └── ui
+│       ├── alert-dialog.tsx
+│       ├── alert.tsx
+│       ├── badge.tsx
+│       ├── button.tsx
+│       ├── card.tsx
+│       ├── dropdown-menu.tsx
+│       ├── input.tsx
+│       ├── label.tsx
+│       ├── progress.tsx
+│       ├── select.tsx
+│       ├── sheet.tsx
+│       ├── table.tsx
+│       ├── textarea.tsx
+│       └── tooltip.tsx
+├── components.json
+├── db
+│   ├── migrate.ts
+│   ├── queries.ts
+│   └── schema.ts
+├── drizzle.config.ts
+├── lib
+│   ├── drizzle
+│   │   ├── 0000_keen_devos.sql
+│   │   └── meta
+│   │       ├── 0000_snapshot.json
+│   │       └── _journal.json
+│   ├── stream-processor.ts
+│   └── utils.ts
+├── middleware.ts
+├── next-env.d.ts
+├── next.config.mjs
+├── package.json
+├── pnpm-lock.yaml
+├── postcss.config.mjs
+├── public
+│   ├── fonts
+│   │   ├── geist-mono.woff2
+│   │   └── geist.woff2
+│   └── images
+│       └── demo-thumbnail.png
+├── response-example.json
+├── sdk-vercel-ai-docs-llms.txt
+├── tailwind.config.ts
+├── tsconfig.json
+└── types
+    ├── llm-responses.ts
+    ├── response-buffer.ts
+    └── tools.ts
+
+29 directories, 84 files

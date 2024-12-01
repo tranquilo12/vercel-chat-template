@@ -1,6 +1,6 @@
 "server-only";
 
-import { AssistantMessage, CoreMessage, FilePart, TextPart , ImagePart } from "ai";
+import { CoreMessage } from "ai";
 import { genSaltSync, hashSync } from "bcrypt-ts";
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -42,12 +42,19 @@ export async function saveChat({
     userId,
 }: {
     id: string;
-    messages: CoreMessage[] | AssistantMessage[];
+    messages: CoreMessage[];
     userId: string;
 }) {
     if (!id || !messages || !userId) {
         throw new Error('Missing required fields for saving chat');
     }
+
+    // Normalize the messages before storing
+    const normalizedMessages = messages.map(msg => ({
+        ...msg,
+        content: msg.content,
+        toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : []
+    }));
 
     try {
         const selectedChats = await db.select().from(chat).where(eq(chat.id, id));
@@ -56,7 +63,7 @@ export async function saveChat({
             return await db
                 .update(chat)
                 .set({
-                    messages: JSON.stringify(messages),
+                    messages: JSON.stringify(normalizedMessages),
                 })
                 .where(eq(chat.id, id));
         }
@@ -64,7 +71,7 @@ export async function saveChat({
         return await db.insert(chat).values({
             id,
             createdAt: new Date(),
-            messages: JSON.stringify(messages),
+            messages: JSON.stringify(normalizedMessages),
             userId,
         });
     } catch (error) {
@@ -84,11 +91,24 @@ export async function deleteChatById({ id }: { id: string }) {
 
 export async function getChatsByUserId({ id }: { id: string }) {
     try {
-        return await db
+        const chats = await db
             .select()
             .from(chat)
             .where(eq(chat.userId, id))
             .orderBy(desc(chat.createdAt));
+
+        return chats.map(chatData => ({
+            ...chatData,
+            messages: (chatData.messages as CoreMessage[]).map((msg: any) => ({
+                ...msg,
+                // Preserve the original content structure
+                content: Array.isArray(msg.content)
+                    ? msg.content
+                    : msg.content,
+                // Properly reconstruct tool invocations
+                toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : []
+            })) || []
+        }));
     } catch (error) {
         console.error("Failed to get chats by user from database");
         throw error;

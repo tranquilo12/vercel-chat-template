@@ -1,5 +1,5 @@
 /* eslint-disable import/order */
-import { convertToCoreMessages, CoreMessage, JSONValue, StreamData, streamText } from 'ai';
+import { convertToCoreMessages, CoreMessage, JSONValue, StreamData, streamText, ToolCall, ToolResultPart } from 'ai';
 
 import { openaiModel } from '@/ai';
 import { auth } from '@/app/(auth)/auth';
@@ -21,6 +21,23 @@ export interface InterpreterResponse {
         type: string;
         message: string;
     };
+}
+
+// Define the shape of a step from the AI SDK
+interface Step {
+    id: string;
+    messageId?: string;
+    toolCalls?: ToolInvocation[];
+    toolResults?: ToolResultPart[];
+}
+
+// Define the shape of our tool invocation
+interface ToolInvocation {
+    toolCallId: string;
+    toolName: string;
+    args: string;
+    state: 'call' | 'result';
+    result?: ToolResultPart;
 }
 
 export async function POST(req: Request) {
@@ -81,38 +98,68 @@ export async function POST(req: Request) {
         onFinish: async ({ steps, responseMessages }) => {
             if (session.user && session.user.id) {
                 try {
-                    // Convert responseMessages to include tool invocations
-                    const messagesWithTools = responseMessages.map(msg => ({
-                        ...msg,
-                        toolInvocations: steps
-                            ?.filter(step =>
-                                // Filter for steps that have tool calls
-                                step.stepType === 'initial' && step.toolCalls?.length > 0
-                            )
-                            .flatMap(step =>
-                                // Process each tool call in the step
-                                step.toolCalls?.map(toolCall => {
-                                    // Find corresponding tool result
-                                    const toolResult = steps.find(
-                                        resultStep =>
-                                            resultStep.stepType === 'tool-result' &&
-                                            resultStep.toolCalls?.find(resultToolCall => resultToolCall.toolCallId === toolCall.toolCallId)
-                                    );
+                    // Create a map of message ID to tool calls
+                    const messageToolCallsMap = new Map<string, ToolInvocation[]>();
 
-                                    return {
+                    // Process all steps and associate them with messages
+                    (steps as unknown as Step[])?.forEach(step => {
+                        if (step.messageId) {
+                            if (!messageToolCallsMap.has(step.messageId)) {
+                                messageToolCallsMap.set(step.messageId, []);
+                            }
+
+                            // Handle tool calls
+                            if (step.toolCalls) {
+                                step.toolCalls.forEach(toolCall => {
+                                    messageToolCallsMap.get(step.messageId as string)?.push({
                                         toolCallId: toolCall.toolCallId,
                                         toolName: toolCall.toolName,
-                                        args: toolCall.args,
-                                        state: 'result',
-                                        result: toolResult?.toolResults || ''
-                                    };
-                                }) || []
-                            )
+                                        args: typeof toolCall.args === 'string' ? toolCall.args : JSON.stringify(toolCall.args),
+                                        state: 'call',
+                                    });
+                                });
+                            }
+
+                            // Handle tool results
+                            if (step.toolResults) {
+                                step.toolResults.forEach(result => {
+                                    const existingCalls = messageToolCallsMap.get(step.messageId as string) || [];
+                                    const callIndex = existingCalls.findIndex(
+                                        call => call.toolCallId === result.toolCallId
+                                    );
+
+                                    if (callIndex !== -1) {
+                                        existingCalls[callIndex] = {
+                                            ...existingCalls[callIndex],
+                                            state: 'result',
+                                            result: result.result as ToolResultPart
+                                        };
+                                    } else {
+                                        // If we receive a tool result without a previous call, create a new entry
+                                        existingCalls.push({
+                                            toolCallId: result.toolCallId,
+                                            toolName: result.toolName || '',
+                                            args: result.result as string,
+                                            state: 'result',
+                                            result: result.result as ToolResultPart
+                                        });
+                                    }
+                                    messageToolCallsMap.set(step.messageId as string, existingCalls);
+                                });
+                            }
+                        }
+                    });
+
+                    // Map response messages with their corresponding tool calls and results
+                    const messagesWithTools = responseMessages.map(msg => ({
+                        ...msg,
+                        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+                        toolInvocations: messageToolCallsMap.get((msg as any).id || '') || []
                     }));
 
                     await saveChat({
                         id: chatId as string,
-                        messages: [...coreMessages, ...messagesWithTools],
+                        messages: [...coreMessages, ...messagesWithTools] as CoreMessage[],
                         userId: session.user.id,
                     });
                 } catch (error) {
@@ -122,8 +169,6 @@ export async function POST(req: Request) {
                         message: 'Failed to save chat',
                     });
                 }
-            } else {
-                console.error('No valid session user for saving chat');
             }
             await data.close();
         },

@@ -1,7 +1,7 @@
 "use client";
 
-import { Attachment, Message, CreateMessage } from "ai";
-import { useState } from "react";
+import { Attachment, Message, CreateMessage, CoreMessage } from "ai";
+import { useState, useMemo } from "react";
 import { v4 as uuidv4 } from "uuid";
 
 import { Markdown } from "@/components/custom/markdown";
@@ -11,19 +11,81 @@ import { cn } from "@/lib/utils";
 import { MultimodalInput } from "./multimodal-input";
 import { useCustomChat, ExtendedMessage } from "./useCustomChat";
 
-function MessageContent({ message }: { message: ExtendedMessage }) {
+function MessageContent({
+  message,
+  isEditing,
+  onEditComplete,
+  onEditStart,
+}: {
+  message: ExtendedMessage;
+  isEditing?: boolean;
+  onEditComplete?: (content: string) => void;
+  onEditStart?: () => void;
+}) {
+  const [editedContent, setEditedContent] = useState(message.content);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      onEditComplete?.(editedContent);
+    }
+  };
+
+  // Parse content if it's an array format
+  const displayContent = useMemo(() => {
+    if (Array.isArray(message.content)) {
+      return message.content
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("");
+    }
+    return message.content;
+  }, [message.content]);
+
+  // Parse tool invocations
+  const toolInvocations = useMemo(() => {
+    if (!message.toolInvocations) return [];
+
+    return message.toolInvocations.map((tool) => ({
+      ...tool,
+      args:
+        typeof tool.args === "string" ? tool.args : JSON.stringify(tool.args),
+      result:
+        tool.result ||
+        (tool.content && Array.isArray(message.content)
+          ? message.content.find(
+              (part) =>
+                part.type === "tool-result" &&
+                part.toolCallId === tool.toolCallId
+            )?.result
+          : null),
+    }));
+  }, [message.toolInvocations, message.content]);
+
+  if (isEditing && message.role === "user") {
+    return (
+      <textarea
+        className="w-full bg-transparent resize-none focus:outline-none"
+        value={editedContent}
+        onChange={(e) => setEditedContent(e.target.value)}
+        onKeyDown={handleKeyDown}
+        autoFocus
+      />
+    );
+  }
+
   return (
-    <div className="prose dark:prose-invert space-y-4">
-      {/* Message Content Section */}
-      {message.content && (
+    <div
+      className="prose dark:prose-invert space-y-4"
+      onClick={() => message.role === "user" && onEditStart?.()}
+    >
+      {displayContent && (
         <div className="border-l-2 border-primary/20 pl-4">
-          {/* <div className="text-xs text-muted-foreground mb-2">Content</div> */}
-          <Markdown>{message.content}</Markdown>
+          <Markdown>{displayContent}</Markdown>
         </div>
       )}
 
-      {/* Tool Invocations Section */}
-      {message.toolInvocations?.map((tool) => (
+      {toolInvocations.map((tool) => (
         <div key={tool.toolCallId} className="space-y-2">
           {tool.state === "call" && (
             <div className="text-xs text-muted-foreground/80 italic">
@@ -42,7 +104,13 @@ function MessageContent({ message }: { message: ExtendedMessage }) {
                   <div className="px-4 py-2 bg-muted/30">
                     <Markdown>
                       {`\`\`\`python
-${typeof tool.args === "object" ? tool.args.code : tool.args}
+${
+  typeof tool.args === "string"
+    ? JSON.parse(tool.args).code
+    : typeof tool.args === "object"
+      ? tool.args.code
+      : tool.args
+}
 \`\`\``}
                     </Markdown>
                   </div>
@@ -76,7 +144,7 @@ ${typeof tool.args === "object" ? tool.args.code : tool.args}
       ))}
 
       {/* Empty State */}
-      {!message.content && !message.toolInvocations?.length && (
+      {!displayContent && !toolInvocations.length && (
         <div className="text-muted-foreground text-sm italic">
           Empty message
         </div>
@@ -96,6 +164,7 @@ export function Chat({
 
   const {
     messages,
+    setMessages,
     handleSubmit,
     input,
     setInput,
@@ -112,6 +181,30 @@ export function Chat({
     useScrollToBottom<HTMLDivElement>();
 
   const [attachments, setAttachments] = useState<Array<Attachment>>([]);
+
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+
+  const handleEditComplete = async (messageId: string, newContent: string) => {
+    const messageIndex = messages.findIndex((m) => m.id === messageId);
+    if (messageIndex === -1) return;
+
+    // Create new message array with edited message and remove subsequent messages
+    const updatedMessages = messages.slice(0, messageIndex + 1);
+    updatedMessages[messageIndex] = {
+      ...updatedMessages[messageIndex],
+      content: newContent,
+    };
+
+    // Update messages state
+    setMessages(updatedMessages);
+    setEditingMessageId(null);
+
+    // Trigger new completion
+    setInput("");
+    await handleSubmit(undefined, {
+      allowEmptySubmit: true,
+    });
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -136,13 +229,17 @@ export function Chat({
                     : "bg-muted text-muted-foreground"
                 )}
               >
-                {/* Role indicator (User/Assistant) */}
                 <div className="text-sm font-semibold">
                   {message.role === "user" ? "You" : "Assistant"}
                 </div>
-
-                {/* Message content with code blocks */}
-                <MessageContent message={message} />
+                <MessageContent
+                  message={message}
+                  isEditing={editingMessageId === message.id}
+                  onEditStart={() => setEditingMessageId(message.id)}
+                  onEditComplete={(content) =>
+                    handleEditComplete(message.id, content)
+                  }
+                />
               </div>
             </div>
           ))

@@ -296,6 +296,7 @@ export function useCustomChat({
 
     return {
         messages,
+        setMessages,
         handleSubmit,
         input,
         setInput,
