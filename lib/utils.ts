@@ -95,6 +95,17 @@ export function convertToUIMessages(
 ): Array<Message> {
     return messages.reduce((chatMessages: Array<Message>, message) => {
         if (message.role === "tool") {
+            // First add the tool message itself
+            const toolMessage: Message = {
+                id: generateId(),
+                role: 'tool',
+                content: typeof message.content === 'string' 
+                    ? message.content 
+                    : JSON.stringify(message.content),
+            };
+            chatMessages.push(toolMessage);
+            
+            // Then update any related tool invocations
             return addToolMessageToChat({
                 toolMessage: message as CoreToolMessage,
                 messages: chatMessages,

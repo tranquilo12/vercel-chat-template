@@ -142,25 +142,36 @@ const processStreamLine = (
                 const resultEvent = JSON.parse(dataStr);
                 setMessages((prevMessages) => {
                     const lastMessage = prevMessages[prevMessages.length - 1];
-                    if (lastMessage.id !== aiMessage.id) return prevMessages;
-
-                    const toolInvocations = lastMessage.toolInvocations || [];
-                    const toolInvocationIndex = toolInvocations.findIndex(
-                        (invocation) => invocation.toolCallId === resultEvent.toolCallId
-                    );
-
-                    if (toolInvocationIndex >= 0) {
-                        const updatedToolInvocations = [...toolInvocations];
-                        updatedToolInvocations[toolInvocationIndex] = {
-                            ...updatedToolInvocations[toolInvocationIndex],
-                            result: resultEvent.output,
-                            state: 'result' as const
-                        } as ToolInvocation & CustomToolInvocation;
+                    // If the last message is from the assistant and has toolInvocations
+                    if (lastMessage.role === 'assistant' && lastMessage.toolInvocations) {
+                        // Update the existing tool invocation with the result
+                        const updatedToolInvocations = lastMessage.toolInvocations.map(invocation =>
+                            invocation.toolCallId === resultEvent.toolCallId
+                                ? {
+                                    ...invocation,
+                                    state: 'result' as const,
+                                    result: resultEvent.output
+                                }
+                                : invocation
+                        );
 
                         return [...prevMessages.slice(0, -1),
-                        { ...lastMessage, toolInvocations: updatedToolInvocations }];
+                        { ...lastMessage, toolInvocations: updatedToolInvocations }
+                        ];
                     }
-                    return prevMessages;
+
+                    // If we can't associate it with a previous message, create a new tool message
+                    const toolResultMessage = {
+                        id: uuidv4(),
+                        role: 'tool' as const,
+                        content: JSON.stringify([{
+                            type: 'tool-result',
+                            toolCallId: resultEvent.toolCallId,
+                            toolName: resultEvent.toolName,
+                            result: resultEvent.output
+                        }])
+                    };
+                    return [...prevMessages, toolResultMessage];
                 });
             } catch (error) {
                 console.error('Error processing tool output:', error);

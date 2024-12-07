@@ -24,43 +24,83 @@ function MessageContent({
 }) {
   const [editedContent, setEditedContent] = useState(message.content);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      onEditComplete?.(editedContent);
-    }
-  };
+  // Debug logging
+  console.log('Message:', message);
 
-  // Parse content if it's an array format
-  const displayContent = useMemo(() => {
-    if (Array.isArray(message.content)) {
-      return message.content
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join("");
+  // Parse content if it's a JSON string
+  const parsedContent = useMemo(() => {
+    if (
+      typeof message.content === "string" &&
+      message.content.startsWith("[")
+    ) {
+      try {
+        return JSON.parse(message.content);
+      } catch (e) {
+        return null;
+      }
     }
-    return message.content;
+    return null;
   }, [message.content]);
 
-  // Parse tool invocations
-  const toolInvocations = useMemo(() => {
-    if (!message.toolInvocations) return [];
+  // Extract text content and tool calls/results
+  const { textContent, toolCalls } = useMemo(() => {
+    if (!parsedContent) {
+      return {
+        textContent: typeof message.content === 'string' ? message.content : JSON.stringify(message.content),
+        toolCalls: message.toolInvocations || [],
+      };
+    }
 
-    return message.toolInvocations.map((tool) => ({
-      ...tool,
-      args:
-        typeof tool.args === "string" ? tool.args : JSON.stringify(tool.args),
-      result:
-        tool.result ||
-        (tool.content && Array.isArray(message.content)
-          ? message.content.find(
-              (part) =>
-                part.type === "tool-result" &&
-                part.toolCallId === tool.toolCallId
-            )?.result
-          : null),
-    }));
-  }, [message.toolInvocations, message.content]);
+    const text = parsedContent
+      .filter((part: any) => part.type === "text")
+      .map((part: any) => part.text)
+      .join("");
+
+    return {
+      textContent: text,
+      toolCalls: message.toolInvocations || [],
+    };
+  }, [parsedContent, message.content, message.toolInvocations]);
+  console.log('Tool Calls:', toolCalls);
+
+  // Handle tool role messages
+  if (message.role === 'tool') {
+    try {
+      const toolContent = typeof message.content === 'string' 
+        ? JSON.parse(message.content) 
+        : message.content;
+      
+      return (
+        <div className="space-y-4">
+          {Array.isArray(toolContent) ? toolContent.map((tool: any, index: number) => (
+            <div key={index} className="border rounded-lg overflow-hidden bg-muted/50">
+              <div className="border-b px-4 py-2">
+                <span className="text-sm font-medium">{tool.toolName}</span>
+              </div>
+              <div className="p-4">
+                <div className="font-mono text-sm whitespace-pre-wrap">
+                  {typeof tool.result === 'object' 
+                    ? JSON.stringify(tool.result, null, 2)
+                    : String(tool.result)}
+                </div>
+              </div>
+            </div>
+          )) : (
+            <div className="prose dark:prose-invert">
+              <Markdown>{String(message.content)}</Markdown>
+            </div>
+          )}
+        </div>
+      );
+    } catch (e) {
+      console.error('Error rendering tool message:', e);
+      return (
+        <div className="prose dark:prose-invert">
+          <Markdown>{String(message.content)}</Markdown>
+        </div>
+      );
+    }
+  }
 
   if (isEditing && message.role === "user") {
     return (
@@ -68,87 +108,83 @@ function MessageContent({
         className="w-full bg-transparent resize-none focus:outline-none"
         value={editedContent}
         onChange={(e) => setEditedContent(e.target.value)}
-        onKeyDown={handleKeyDown}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            onEditComplete?.(editedContent);
+          }
+        }}
         autoFocus
       />
     );
   }
 
   return (
-    <div
-      className="prose dark:prose-invert space-y-4"
-      onClick={() => message.role === "user" && onEditStart?.()}
-    >
-      {displayContent && (
-        <div className="border-l-2 border-primary/20 pl-4">
-          <Markdown>{displayContent}</Markdown>
+    <div className="space-y-4">
+      {/* Text Content */}
+      {textContent && (
+        <div className="prose dark:prose-invert">
+          <Markdown>{textContent}</Markdown>
         </div>
       )}
 
-      {toolInvocations.map((tool) => (
-        <div key={tool.toolCallId} className="space-y-2">
-          {tool.state === "call" && (
-            <div className="text-xs text-muted-foreground/80 italic">
-              Executing {tool.toolName}...
+      {/* Tool Calls and Results */}
+      {message.role === "assistant" &&
+        toolCalls &&
+        toolCalls.map((tool: any) => (
+          <div
+            key={tool.toolCallId}
+            className="border rounded-lg overflow-hidden bg-muted/50"
+          >
+            <div className="border-b px-4 py-2 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">{tool.toolName}</span>
+                <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
+                  {tool.state}
+                </span>
+              </div>
             </div>
-          )}
 
-          {tool.state === "result" && (
-            <div className="space-y-2">
-              {/* Code Section */}
-              {tool.args && (
-                <details className="border rounded-md">
-                  <summary className="text-xs font-medium px-4 py-2 cursor-pointer hover:bg-muted/50">
-                    Code from {tool.toolName}
-                  </summary>
-                  <div className="px-4 py-2 bg-muted/30">
-                    <Markdown>
-                      {`\`\`\`python
-${
-  typeof tool.args === "string"
-    ? JSON.parse(tool.args).code
-    : typeof tool.args === "object"
-      ? tool.args.code
-      : tool.args
-}
-\`\`\``}
-                    </Markdown>
-                  </div>
-                </details>
-              )}
+            {/* Code Section */}
+            <div className="p-4 bg-muted/30">
+              <div className="font-mono text-sm overflow-x-auto">
+                <Markdown>{`\`\`\`python\n${typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2)}\n\`\`\``}</Markdown>
+              </div>
+            </div>
 
-              {/* Output Section */}
-              <details className="border rounded-md" open>
-                <summary className="text-xs font-medium px-4 py-2 cursor-pointer hover:bg-muted/50">
-                  Output from {tool.toolName}
-                </summary>
-                <div className="px-4 py-2 bg-muted/30">
-                  {tool.result?.success === false ? (
-                    <div className="text-red-500 text-sm">
-                      Error: {tool.result.error.message}
-                    </div>
-                  ) : tool.result ? (
-                    <Markdown>
-                      {tool.result.output || "No output provided"}
-                    </Markdown>
+            {/* Tool Result Section */}
+            {tool.state === "result" && tool.result && (
+              <div className="border-t">
+                <div className="p-4 bg-muted/20">
+                  <h4 className="text-sm font-medium mb-2">
+                    Result from {tool.toolName}
+                  </h4>
+                  {typeof tool.result === 'object' ? (
+                    'success' in tool.result ? (
+                      tool.result.success === false ? (
+                        <div className="text-red-500 text-sm">
+                          Error: {String(tool.result.error?.message || 'Unknown error')}
+                        </div>
+                      ) : (
+                        <div className="font-mono text-sm whitespace-pre-wrap">
+                          {String(tool.result.output || "No output provided")}
+                        </div>
+                      )
+                    ) : (
+                      <div className="font-mono text-sm whitespace-pre-wrap">
+                        {JSON.stringify(tool.result, null, 2)}
+                      </div>
+                    )
                   ) : (
-                    <div className="text-muted-foreground text-sm italic">
-                      No result available
+                    <div className="font-mono text-sm whitespace-pre-wrap">
+                      {String(tool.result)}
                     </div>
                   )}
                 </div>
-              </details>
-            </div>
-          )}
-        </div>
-      ))}
-
-      {/* Empty State */}
-      {!displayContent && !toolInvocations.length && (
-        <div className="text-muted-foreground text-sm italic">
-          Empty message
-        </div>
-      )}
+              </div>
+            )}
+          </div>
+        ))}
     </div>
   );
 }

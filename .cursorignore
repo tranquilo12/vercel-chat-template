@@ -12,3 +12,17 @@
 *.mjs
 *.eslintrc.json
 public/
+.prompts/
+.vscode/
+.vercel/
+.idea/
+.next/
+*.png
+*.svg
+*.webp
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+lib/drizzle/

@@ -1,5 +1,5 @@
 /* eslint-disable import/order */
-import { convertToCoreMessages, CoreMessage, JSONValue, StreamData, streamText, ToolCall, ToolResultPart } from 'ai';
+import { convertToCoreMessages, CoreMessage, generateId, JSONValue, StreamData, streamText, ToolCall, ToolResultPart } from 'ai';
 
 import { openaiModel } from '@/ai';
 import { auth } from '@/app/(auth)/auth';
@@ -151,15 +151,45 @@ export async function POST(req: Request) {
                     });
 
                     // Map response messages with their corresponding tool calls and results
-                    const messagesWithTools = responseMessages.map(msg => ({
-                        ...msg,
-                        content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-                        toolInvocations: messageToolCallsMap.get((msg as any).id || '') || []
-                    }));
+                    const messagesWithTools = responseMessages.map(msg => {
+                        const toolInvocations = messageToolCallsMap.get((msg as any).id || '') || [];
+
+                        // Process tool results and associate them with their calls
+                        toolInvocations.forEach(invocation => {
+                            if (invocation.state === 'result' && invocation.result) {
+                                // Store the result properly
+                                invocation.result = invocation.result as ToolResultPart;
+                            }
+                        });
+
+                        return {
+                            ...msg,
+                            content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+                            toolInvocations: toolInvocations
+                        };
+                    });
+
+                    // Create tool result messages
+                    const toolResultMessages = Array.from(messageToolCallsMap.entries())
+                        .flatMap(([messageId, toolCalls]) =>
+                            toolCalls
+                                .filter(call => call.state === 'result')
+                                .map(call => ({
+                                    id: generateId(),
+                                    role: 'tool' as const,
+                                    content: JSON.stringify([{
+                                        type: 'tool-result',
+                                        toolCallId: call.toolCallId,
+                                        toolName: call.toolName,
+                                        result: call.result
+                                    }]),
+                                    toolInvocations: []
+                                }))
+                        );
 
                     await saveChat({
                         id: chatId as string,
-                        messages: [...coreMessages, ...messagesWithTools] as CoreMessage[],
+                        messages: [...coreMessages, ...messagesWithTools, ...toolResultMessages] as CoreMessage[],
                         userId: session.user.id,
                     });
                 } catch (error) {
