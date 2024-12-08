@@ -234,42 +234,41 @@ export function useCustomChat({
 
     const handleSubmit = async (
         e?: { preventDefault?: () => void },
-        chatRequestOptions?: ChatRequestOptions
+        chatRequestOptions?: ChatRequestOptions & { messages?: ExtendedMessage[], allowEmptySubmit?: boolean }
     ) => {
         e?.preventDefault?.();
-        if (!input.trim()) return;
+        
+        const messageHistory = chatRequestOptions?.messages || messages;
+        
+        // Only create new user message if not using custom message history
+        const updatedMessages = chatRequestOptions?.messages || [...messages, {
+            id: uuidv4(),
+            role: 'user',
+            content: input,
+        } as ExtendedMessage];
+
+        const aiMessage: ExtendedMessage = {
+            id: uuidv4(),
+            role: 'assistant',
+            content: '',
+            tool_calls: [],
+        };
+
+        setMessages([...updatedMessages, aiMessage]);
+
+        const payload = {
+            chatId: id,
+            messages: updatedMessages,
+            ...chatRequestOptions,
+        };
 
         setIsLoading(true);
         try {
-            const userMessage: ExtendedMessage = {
-                id: uuidv4(),
-                role: 'user',
-                content: input,
-            };
-
-            const aiMessage: ExtendedMessage = {
-                id: uuidv4(),
-                role: 'assistant',
-                content: '',
-                tool_calls: [],
-            };
-
-            const payload = {
-                chatId: id,
-                messages: [...messages, userMessage],
-                ...chatRequestOptions,
-            };
-
-            setMessages(prev => [...prev, userMessage, aiMessage]);
-
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
                 signal: (abortControllerRef.current = new AbortController()).signal,
-            }).then(res => {
-                if (!res.ok) throw new Error(res.statusText);
-                return res;
             });
 
             const reader = response.body?.getReader();
