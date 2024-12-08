@@ -8,6 +8,7 @@ import { Markdown } from "@/components/custom/markdown";
 import { useScrollToBottom } from "@/components/custom/use-scroll-to-bottom";
 import { cn } from "@/lib/utils";
 
+import { JsonFormatter } from "./JsonFormatter";
 import { MultimodalInput } from "./multimodal-input";
 import { useCustomChat, ExtendedMessage } from "./useCustomChat";
 
@@ -23,9 +24,6 @@ function MessageContent({
   onEditStart?: () => void;
 }) {
   const [editedContent, setEditedContent] = useState(message.content);
-
-  // Debug logging
-  // console.log("Message:", message);
 
   // Parse content if it's a JSON string
   const parsedContent = useMemo(() => {
@@ -71,8 +69,6 @@ function MessageContent({
     };
   }, [parsedContent, message.content, message.toolInvocations]);
 
-  // console.log("Tool Calls:", toolInvocations);
-
   // Handle tool role messages
   if (message.role === "tool") {
     try {
@@ -86,27 +82,44 @@ function MessageContent({
                 key={index}
                 className="border rounded-lg overflow-hidden bg-muted/50"
               >
-                <div className="border-b px-4 py-2">
-                  <span className="text-sm font-medium">{tool.toolName}</span>
+                <div className="border-b px-4 py-2 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{tool.toolName}</span>
+                    {tool.result.success === false && (
+                      <span className="text-xs px-2 py-1 rounded-full bg-destructive/10 text-destructive">
+                        Error
+                      </span>
+                    )}
+                    {tool.result.success === true && (
+                      <span className="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-500">
+                        Success
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="p-4">
-                  <div className="font-mono text-sm whitespace-pre-wrap">
-                    {typeof tool.result === "object"
-                      ? JSON.stringify(tool.result, null, 2)
-                      : String(tool.result)}
-                  </div>
+                  {tool.result.success === false ? (
+                    <div className="text-sm text-destructive">
+                      {tool.error?.message ||
+                        "An error occurred during execution"}
+                    </div>
+                  ) : (
+                    <div className="prose dark:prose-invert">
+                      <Markdown>
+                        {typeof tool.result === "object"
+                          ? "```json\n" +
+                            JSON.stringify(tool.result, null, 2) +
+                            "\n```"
+                          : String(tool.result)}
+                      </Markdown>
+                    </div>
+                  )}
                 </div>
               </div>
             ))
           ) : (
             <div className="prose dark:prose-invert">
-              <Markdown>
-                {String(
-                  message.content ||
-                    message.toolInvocations ||
-                    message.tool_calls
-                )}
-              </Markdown>
+              <Markdown>{String(message.content)}</Markdown>
             </div>
           )}
         </div>
@@ -142,7 +155,7 @@ function MessageContent({
     <div className="space-y-4">
       {/* Text Content */}
       {textContent && (
-        <div className="prose dark:prose-invert">
+        <div className="prose dark:prose-invert max-w-none break-words">
           <Markdown>{textContent}</Markdown>
         </div>
       )}
@@ -151,65 +164,53 @@ function MessageContent({
       {message.role === "assistant" &&
         toolInvocations &&
         toolInvocations.map((tool: any) => (
-          <div
-            key={tool.toolCallId}
-            className="border rounded-lg overflow-hidden bg-muted/50"
-          >
-            <div className="border-b px-4 py-2 flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">{tool.toolName}</span>
-                <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
-                  {tool.state}
-                </span>
-              </div>
-            </div>
-
-            {/* Code Section */}
-            <div className="p-4 bg-muted/30">
-              <div className="font-mono text-sm overflow-x-auto">
-                <Markdown>{`\`\`\`python\n${typeof tool.args === "string" ? tool.args : JSON.stringify(tool.args, null, 2)}\n\`\`\``}</Markdown>
-              </div>
-            </div>
-
-            {/* Tool Result Section */}
-            {tool.state === "result" && tool.result && (
-              <div className="border-t">
-                <div className="p-4 bg-muted/20">
-                  <h4 className="text-sm font-medium mb-2">
-                    Result from {tool.toolName}
-                  </h4>
-                  {typeof tool.result === "object" ? (
-                    "success" in tool.result ? (
-                      tool.result.success === false ? (
-                        <div className="text-red-500 text-sm">
-                          Error:{" "}
-                          {String(
-                            tool.result.error?.message || "Unknown error"
-                          )}
-                        </div>
-                      ) : (
-                        <div className="font-mono text-sm whitespace-pre-wrap">
-                          {String(tool.result.output || "No output provided")}
-                        </div>
-                      )
-                    ) : (
-                      <div className="font-mono text-sm whitespace-pre-wrap">
-                        {JSON.stringify(tool.result, null, 2)}
-                      </div>
-                    )
-                  ) : (
-                    <div className="font-mono text-sm whitespace-pre-wrap">
-                      {String(tool.result)}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+          <ToolDisplay key={tool.toolCallId} tool={tool} />
         ))}
     </div>
   );
 }
+
+const ToolDisplay = ({ tool }: { tool: any }) => {
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  return (
+    <div className="border rounded-lg overflow-hidden bg-muted/50">
+      {/* Tool Header - make it clickable */}
+      <div 
+        className="border-b px-4 py-2 flex justify-between items-center bg-muted/70 cursor-pointer hover:bg-muted/90 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">{tool.toolName}</span>
+          <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
+            {tool.state}
+          </span>
+        </div>
+        <button className="text-sm text-muted-foreground">
+          {isExpanded ? '▼' : '▶'}
+        </button>
+      </div>
+
+      {/* Code Section - collapsible */}
+      {isExpanded && (
+        <div className="p-4 space-y-4">
+          <div className="overflow-x-auto">
+            <div className="max-w-[calc(100vw-4rem)] md:max-w-[calc(100vw-16rem)]">
+              <JsonFormatter
+                content={
+                  typeof tool.args === "string"
+                    ? tool.args
+                    : JSON.stringify(tool.args)
+                }
+                isStreaming={tool.state === "partial-call"}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export function Chat({
   id,

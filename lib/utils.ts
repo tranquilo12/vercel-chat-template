@@ -57,39 +57,6 @@ export function generateUUID(): string {
         .replace(/(.{8})(.{4})(.{4})(.{4})(.{12})/, '$1-$2-$3-$4-$5');
 }
 
-function addToolMessageToChat({
-    toolMessage,
-    messages,
-}: {
-    toolMessage: CoreToolMessage;
-    messages: Array<Message>;
-}): Array<Message> {
-    return messages.map((message) => {
-        if (message.toolInvocations) {
-            return {
-                ...message,
-                toolInvocations: message.toolInvocations.map((toolInvocation) => {
-                    const toolResult = toolMessage.content.find(
-                        (tool) => tool.toolCallId === toolInvocation.toolCallId,
-                    );
-
-                    if (toolResult) {
-                        return {
-                            ...toolInvocation,
-                            state: "result",
-                            result: toolResult.result,
-                        };
-                    }
-
-                    return toolInvocation;
-                }),
-            };
-        }
-
-        return message;
-    });
-}
-
 export function convertToUIMessages(messages: Array<CoreMessage>): Array<Message> {
     return messages.reduce((chatMessages: Array<Message>, message) => {
         // Handle tool messages
@@ -148,36 +115,4 @@ export function getTitleFromChat(chat: Chat) {
     }
 
     return firstMessage.content;
-}
-
-function preprocessMessage(message: any): CoreMessage {
-    if (message.role === 'assistant' && Array.isArray(message.content)) {
-        // Extract text content
-        const textContent = message.content
-            .filter((item: any) => item.type === 'text')
-            .map((item: any) => item.text)
-            .join('');
-
-        // Extract tool calls
-        const toolCalls = message.content
-            .filter((item: any) => item.type === 'tool-call')
-            .map((item: any) => ({
-                id: item.toolCallId,
-                type: 'function',
-                function: {
-                    name: item.toolName,
-                    arguments: JSON.stringify(item.args)
-                }
-            }));
-
-        // Return formatted message
-        return {
-            role: 'assistant',
-            content: textContent || JSON.stringify(message.content),
-            tool_calls: toolCalls.length > 0 ? toolCalls : undefined
-        } as CoreMessage;
-    }
-
-    // Return unchanged for other message types
-    return message as CoreMessage;
 }

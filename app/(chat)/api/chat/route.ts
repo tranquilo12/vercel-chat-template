@@ -1,5 +1,5 @@
 /* eslint-disable import/order */
-import { convertToCoreMessages, CoreMessage, generateId, JSONValue, ProviderMetadata, StreamData, streamText, ToolCall, ToolResultPart } from 'ai';
+import { convertToCoreMessages, CoreMessage, JSONValue, StreamData, streamText } from 'ai';
 
 import { openaiModel } from '@/ai';
 import { auth } from '@/app/(auth)/auth';
