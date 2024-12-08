@@ -14,8 +14,8 @@ import { v4 as uuidv4 } from "uuid";
 
 import { Markdown } from "@/components/custom/markdown";
 import { useScrollToBottom } from "@/components/custom/use-scroll-to-bottom";
-import { cn } from "@/lib/utils";
 import { highlightCode } from "@/lib/syntax-highlighting";
+import { cn } from "@/lib/utils";
 
 import { JsonFormatter } from "./JsonFormatter";
 import { MultimodalInput } from "./multimodal-input";
