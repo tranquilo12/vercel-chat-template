@@ -1,8 +1,8 @@
-import {CoreMessage, CoreToolMessage, generateId, Message, ToolInvocation,} from "ai";
-import {type ClassValue, clsx} from "clsx";
-import {twMerge} from "tailwind-merge";
+import { CoreMessage, CoreToolMessage, generateId, Message, ToolInvocation, } from "ai";
+import { type ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
 
-import {Chat} from "@/db/schema";
+import { Chat } from "@/db/schema";
 
 export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
@@ -58,9 +58,9 @@ export function generateUUID(): string {
 }
 
 function addToolMessageToChat({
-                                  toolMessage,
-                                  messages,
-                              }: {
+    toolMessage,
+    messages,
+}: {
     toolMessage: CoreToolMessage;
     messages: Array<Message>;
 }): Array<Message> {
@@ -90,28 +90,23 @@ function addToolMessageToChat({
     });
 }
 
-export function convertToUIMessages(
-    messages: Array<CoreMessage>,
-): Array<Message> {
+export function convertToUIMessages(messages: Array<CoreMessage>): Array<Message> {
     return messages.reduce((chatMessages: Array<Message>, message) => {
+        // Handle tool messages
         if (message.role === "tool") {
-            // First add the tool message itself
             const toolMessage: Message = {
                 id: generateId(),
                 role: 'tool',
-                content: typeof message.content === 'string' 
-                    ? message.content 
+                content: typeof message.content === 'string'
+                    ? message.content
                     : JSON.stringify(message.content),
+                toolInvocations: [] // Initialize empty array for consistency
             };
             chatMessages.push(toolMessage);
-            
-            // Then update any related tool invocations
-            return addToolMessageToChat({
-                toolMessage: message as CoreToolMessage,
-                messages: chatMessages,
-            });
+            return chatMessages;
         }
 
+        // Handle regular messages
         let textContent = "";
         let toolInvocations: Array<ToolInvocation> = [];
 
@@ -132,11 +127,12 @@ export function convertToUIMessages(
             }
         }
 
+        // Add the message with its tool invocations
         chatMessages.push({
             id: generateId(),
             role: message.role,
             content: textContent,
-            toolInvocations,
+            toolInvocations: toolInvocations,
         });
 
         return chatMessages;
@@ -152,4 +148,36 @@ export function getTitleFromChat(chat: Chat) {
     }
 
     return firstMessage.content;
+}
+
+function preprocessMessage(message: any): CoreMessage {
+    if (message.role === 'assistant' && Array.isArray(message.content)) {
+        // Extract text content
+        const textContent = message.content
+            .filter((item: any) => item.type === 'text')
+            .map((item: any) => item.text)
+            .join('');
+
+        // Extract tool calls
+        const toolCalls = message.content
+            .filter((item: any) => item.type === 'tool-call')
+            .map((item: any) => ({
+                id: item.toolCallId,
+                type: 'function',
+                function: {
+                    name: item.toolName,
+                    arguments: JSON.stringify(item.args)
+                }
+            }));
+
+        // Return formatted message
+        return {
+            role: 'assistant',
+            content: textContent || JSON.stringify(message.content),
+            tool_calls: toolCalls.length > 0 ? toolCalls : undefined
+        } as CoreMessage;
+    }
+
+    // Return unchanged for other message types
+    return message as CoreMessage;
 }

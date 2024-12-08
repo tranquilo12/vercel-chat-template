@@ -25,7 +25,7 @@ function MessageContent({
   const [editedContent, setEditedContent] = useState(message.content);
 
   // Debug logging
-  console.log('Message:', message);
+  // console.log("Message:", message);
 
   // Parse content if it's a JSON string
   const parsedContent = useMemo(() => {
@@ -43,11 +43,11 @@ function MessageContent({
   }, [message.content]);
 
   // Extract text content and tool calls/results
-  const { textContent, toolCalls } = useMemo(() => {
+  const { textContent, toolInvocations } = useMemo(() => {
     if (!parsedContent) {
       return {
-        textContent: typeof message.content === 'string' ? message.content : JSON.stringify(message.content),
-        toolCalls: message.toolInvocations || [],
+        textContent: message.content,
+        toolInvocations: message.toolInvocations || [],
       };
     }
 
@@ -56,44 +56,63 @@ function MessageContent({
       .map((part: any) => part.text)
       .join("");
 
+    const calls = parsedContent
+      .filter((part: any) => part.type === "tool-call")
+      .map((part: any) => ({
+        state: "call",
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        args: part.args,
+      }));
+
     return {
       textContent: text,
-      toolCalls: message.toolInvocations || [],
+      toolInvocations: [...calls, ...(message.toolInvocations || [])],
     };
   }, [parsedContent, message.content, message.toolInvocations]);
-  console.log('Tool Calls:', toolCalls);
+
+  // console.log("Tool Calls:", toolInvocations);
 
   // Handle tool role messages
-  if (message.role === 'tool') {
+  if (message.role === "tool") {
     try {
-      const toolContent = typeof message.content === 'string' 
-        ? JSON.parse(message.content) 
-        : message.content;
-      
+      const toolContent = JSON.parse(message.content);
+
       return (
         <div className="space-y-4">
-          {Array.isArray(toolContent) ? toolContent.map((tool: any, index: number) => (
-            <div key={index} className="border rounded-lg overflow-hidden bg-muted/50">
-              <div className="border-b px-4 py-2">
-                <span className="text-sm font-medium">{tool.toolName}</span>
-              </div>
-              <div className="p-4">
-                <div className="font-mono text-sm whitespace-pre-wrap">
-                  {typeof tool.result === 'object' 
-                    ? JSON.stringify(tool.result, null, 2)
-                    : String(tool.result)}
+          {Array.isArray(toolContent) ? (
+            toolContent.map((tool: any, index: number) => (
+              <div
+                key={index}
+                className="border rounded-lg overflow-hidden bg-muted/50"
+              >
+                <div className="border-b px-4 py-2">
+                  <span className="text-sm font-medium">{tool.toolName}</span>
+                </div>
+                <div className="p-4">
+                  <div className="font-mono text-sm whitespace-pre-wrap">
+                    {typeof tool.result === "object"
+                      ? JSON.stringify(tool.result, null, 2)
+                      : String(tool.result)}
+                  </div>
                 </div>
               </div>
-            </div>
-          )) : (
+            ))
+          ) : (
             <div className="prose dark:prose-invert">
-              <Markdown>{String(message.content)}</Markdown>
+              <Markdown>
+                {String(
+                  message.content ||
+                    message.toolInvocations ||
+                    message.tool_calls
+                )}
+              </Markdown>
             </div>
           )}
         </div>
       );
     } catch (e) {
-      console.error('Error rendering tool message:', e);
+      console.error("Error rendering tool message:", e);
       return (
         <div className="prose dark:prose-invert">
           <Markdown>{String(message.content)}</Markdown>
@@ -130,8 +149,8 @@ function MessageContent({
 
       {/* Tool Calls and Results */}
       {message.role === "assistant" &&
-        toolCalls &&
-        toolCalls.map((tool: any) => (
+        toolInvocations &&
+        toolInvocations.map((tool: any) => (
           <div
             key={tool.toolCallId}
             className="border rounded-lg overflow-hidden bg-muted/50"
@@ -148,7 +167,7 @@ function MessageContent({
             {/* Code Section */}
             <div className="p-4 bg-muted/30">
               <div className="font-mono text-sm overflow-x-auto">
-                <Markdown>{`\`\`\`python\n${typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2)}\n\`\`\``}</Markdown>
+                <Markdown>{`\`\`\`python\n${typeof tool.args === "string" ? tool.args : JSON.stringify(tool.args, null, 2)}\n\`\`\``}</Markdown>
               </div>
             </div>
 
@@ -159,11 +178,14 @@ function MessageContent({
                   <h4 className="text-sm font-medium mb-2">
                     Result from {tool.toolName}
                   </h4>
-                  {typeof tool.result === 'object' ? (
-                    'success' in tool.result ? (
+                  {typeof tool.result === "object" ? (
+                    "success" in tool.result ? (
                       tool.result.success === false ? (
                         <div className="text-red-500 text-sm">
-                          Error: {String(tool.result.error?.message || 'Unknown error')}
+                          Error:{" "}
+                          {String(
+                            tool.result.error?.message || "Unknown error"
+                          )}
                         </div>
                       ) : (
                         <div className="font-mono text-sm whitespace-pre-wrap">
@@ -215,11 +237,8 @@ export function Chat({
 
   const [messagesContainerRef, messagesEndRef] =
     useScrollToBottom<HTMLDivElement>();
-
   const [attachments, setAttachments] = useState<Array<Attachment>>([]);
-
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-
   const handleEditComplete = async (messageId: string, newContent: string) => {
     const messageIndex = messages.findIndex((m) => m.id === messageId);
     if (messageIndex === -1) return;

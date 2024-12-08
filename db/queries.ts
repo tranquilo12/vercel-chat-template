@@ -49,11 +49,12 @@ export async function saveChat({
         throw new Error('Missing required fields for saving chat');
     }
 
-    // Normalize the messages before storing
+    // Normalize the messages before storing, ensuring tool messages are included
     const normalizedMessages = messages.map(msg => ({
         ...msg,
         content: msg.content,
-        toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : []
+        toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : [],
+        role: msg.role
     }));
 
     try {

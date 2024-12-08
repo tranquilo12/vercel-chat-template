@@ -1,5 +1,5 @@
 /* eslint-disable import/order */
-import { convertToCoreMessages, CoreMessage, generateId, JSONValue, StreamData, streamText, ToolCall, ToolResultPart } from 'ai';
+import { convertToCoreMessages, CoreMessage, generateId, JSONValue, ProviderMetadata, StreamData, streamText, ToolCall, ToolResultPart } from 'ai';
 
 import { openaiModel } from '@/ai';
 import { auth } from '@/app/(auth)/auth';
@@ -23,23 +23,6 @@ export interface InterpreterResponse {
     };
 }
 
-// Define the shape of a step from the AI SDK
-interface Step {
-    id: string;
-    messageId?: string;
-    toolCalls?: ToolInvocation[];
-    toolResults?: ToolResultPart[];
-}
-
-// Define the shape of our tool invocation
-interface ToolInvocation {
-    toolCallId: string;
-    toolName: string;
-    args: string;
-    state: 'call' | 'result';
-    result?: ToolResultPart;
-}
-
 export async function POST(req: Request) {
     const body = await req.json();
     const { chatId, messages } = body;
@@ -57,7 +40,7 @@ export async function POST(req: Request) {
         messages: coreMessages,
         experimental_toolCallStreaming: true,
         tools: {
-            pythonInterpreterTool: {
+            executePythonCode: {
                 description: 'Execute Python code and return the output',
                 parameters: z.object({
                     code: z.string().describe('The Python code to execute'),
@@ -98,100 +81,23 @@ export async function POST(req: Request) {
         onFinish: async ({ steps, responseMessages }) => {
             if (session.user && session.user.id) {
                 try {
-                    // Create a map of message ID to tool calls
-                    const messageToolCallsMap = new Map<string, ToolInvocation[]>();
+                    // Ensure tool invocations are included in the messages
+                    const messagesWithTools = messages.map((msg: { toolInvocations: any; }) => ({
+                        ...msg,
+                        toolInvocations: msg.toolInvocations || []
+                    }));
 
-                    // Process all steps and associate them with messages
-                    (steps as unknown as Step[])?.forEach(step => {
-                        if (step.messageId) {
-                            if (!messageToolCallsMap.has(step.messageId)) {
-                                messageToolCallsMap.set(step.messageId, []);
-                            }
-
-                            // Handle tool calls
-                            if (step.toolCalls) {
-                                step.toolCalls.forEach(toolCall => {
-                                    messageToolCallsMap.get(step.messageId as string)?.push({
-                                        toolCallId: toolCall.toolCallId,
-                                        toolName: toolCall.toolName,
-                                        args: typeof toolCall.args === 'string' ? toolCall.args : JSON.stringify(toolCall.args),
-                                        state: 'call',
-                                    });
-                                });
-                            }
-
-                            // Handle tool results
-                            if (step.toolResults) {
-                                step.toolResults.forEach(result => {
-                                    const existingCalls = messageToolCallsMap.get(step.messageId as string) || [];
-                                    const callIndex = existingCalls.findIndex(
-                                        call => call.toolCallId === result.toolCallId
-                                    );
-
-                                    if (callIndex !== -1) {
-                                        existingCalls[callIndex] = {
-                                            ...existingCalls[callIndex],
-                                            state: 'result',
-                                            result: result.result as ToolResultPart
-                                        };
-                                    } else {
-                                        // If we receive a tool result without a previous call, create a new entry
-                                        existingCalls.push({
-                                            toolCallId: result.toolCallId,
-                                            toolName: result.toolName || '',
-                                            args: result.result as string,
-                                            state: 'result',
-                                            result: result.result as ToolResultPart
-                                        });
-                                    }
-                                    messageToolCallsMap.set(step.messageId as string, existingCalls);
-                                });
-                            }
-                        }
-                    });
-
-                    // Map response messages with their corresponding tool calls and results
-                    const messagesWithTools = responseMessages.map(msg => {
-                        const toolInvocations = messageToolCallsMap.get((msg as any).id || '') || [];
-
-                        // Process tool results and associate them with their calls
-                        toolInvocations.forEach(invocation => {
-                            if (invocation.state === 'result' && invocation.result) {
-                                // Store the result properly
-                                invocation.result = invocation.result as ToolResultPart;
-                            }
-                        });
-
-                        return {
-                            ...msg,
-                            content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-                            toolInvocations: toolInvocations
-                        };
-                    });
-
-                    // Create tool result messages
-                    const toolResultMessages = Array.from(messageToolCallsMap.entries())
-                        .flatMap(([messageId, toolCalls]) =>
-                            toolCalls
-                                .filter(call => call.state === 'result')
-                                .map(call => ({
-                                    id: generateId(),
-                                    role: 'tool' as const,
-                                    content: JSON.stringify([{
-                                        type: 'tool-result',
-                                        toolCallId: call.toolCallId,
-                                        toolName: call.toolName,
-                                        result: call.result
-                                    }]),
-                                    toolInvocations: []
-                                }))
-                        );
+                    const responseWithTools = responseMessages.map(msg => ({
+                        ...msg,
+                        toolInvocations: msg.toolInvocations || []
+                    }));
 
                     await saveChat({
-                        id: chatId as string,
-                        messages: [...coreMessages, ...messagesWithTools, ...toolResultMessages] as CoreMessage[],
+                        id: chatId,
+                        messages: [...messagesWithTools, ...responseWithTools],
                         userId: session.user.id,
                     });
+
                 } catch (error) {
                     console.error('Failed to save chat:', error);
                     data.append({

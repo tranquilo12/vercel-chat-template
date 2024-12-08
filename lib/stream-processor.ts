@@ -26,7 +26,7 @@ export class StreamProcessor {
 					this.handleTextChunk(content);
 					break;
 				case '9': // Tool call
-					this.handleToolCallStart(content);
+					this.handletoolInvocationstart(content);
 					break;
 				case 'c': // Tool call delta
 					this.handleToolCallDelta(content);
@@ -61,7 +61,7 @@ export class StreamProcessor {
 		this.handlers.onResponse?.(response);
 	}
 
-	private handleToolCallStart(content: string): void {
+	private handletoolInvocationstart(content: string): void {
 		const toolCall = JSON.parse(content);
 		this.currentToolCall = toolCall.toolCallId;
 

@@ -1,5 +1,5 @@
 import { Message, ToolInvocation, ChatRequestOptions } from 'ai';
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
 type CustomToolInvocation = {
@@ -110,14 +110,31 @@ const processStreamLine = (
                     const lastMessage = prevMessages[prevMessages.length - 1];
                     if (lastMessage.id !== aiMessage.id) return prevMessages;
 
-                    const updatedToolInvocations = lastMessage.toolInvocations?.map(invocation => ({
-                        ...invocation,
-                        state: 'result' as const,
-                        result: invocation.args || ''
-                    })) || [];
+                    // Create a new tool message
+                    const toolMessage = {
+                        id: uuidv4(),
+                        role: 'tool' as const,
+                        content: JSON.stringify(lastMessage.toolInvocations?.map(invocation => ({
+                            type: 'tool-result',
+                            toolCallId: invocation.toolCallId,
+                            toolName: invocation.toolName,
+                            result: invocation.args
+                        })) || [])
+                    };
 
-                    return [...prevMessages.slice(0, -1),
-                    { ...lastMessage, toolInvocations: updatedToolInvocations }];
+                    // Update the assistant message and add the tool message
+                    return [
+                        ...prevMessages.slice(0, -1),
+                        {
+                            ...lastMessage,
+                            toolInvocations: lastMessage.toolInvocations?.map(invocation => ({
+                                ...invocation,
+                                state: 'result' as const,
+                                result: null
+                            }))
+                        },
+                        toolMessage
+                    ];
                 });
             }
             break;
@@ -142,35 +159,40 @@ const processStreamLine = (
                 const resultEvent = JSON.parse(dataStr);
                 setMessages((prevMessages) => {
                     const lastMessage = prevMessages[prevMessages.length - 1];
-                    // If the last message is from the assistant and has toolInvocations
-                    if (lastMessage.role === 'assistant' && lastMessage.toolInvocations) {
-                        // Update the existing tool invocation with the result
-                        const updatedToolInvocations = lastMessage.toolInvocations.map(invocation =>
-                            invocation.toolCallId === resultEvent.toolCallId
-                                ? {
-                                    ...invocation,
-                                    state: 'result' as const,
-                                    result: resultEvent.output
-                                }
-                                : invocation
-                        );
 
-                        return [...prevMessages.slice(0, -1),
-                        { ...lastMessage, toolInvocations: updatedToolInvocations }
-                        ];
-                    }
-
-                    // If we can't associate it with a previous message, create a new tool message
+                    // Create the tool result message first
                     const toolResultMessage = {
                         id: uuidv4(),
                         role: 'tool' as const,
                         content: JSON.stringify([{
                             type: 'tool-result',
                             toolCallId: resultEvent.toolCallId,
-                            toolName: resultEvent.toolName,
-                            result: resultEvent.output
+                            toolName: resultEvent.toolName || '',
+                            result: resultEvent.result || resultEvent.output // Handle both result and output fields
                         }])
                     };
+
+                    // If the last message is from the assistant, also update its toolInvocations
+                    if (lastMessage.role === 'assistant' && lastMessage.toolInvocations) {
+                        const updatedToolInvocations = lastMessage.toolInvocations.map(invocation =>
+                            invocation.toolCallId === resultEvent.toolCallId
+                                ? {
+                                    ...invocation,
+                                    state: 'result' as const,
+                                    result: resultEvent.result || resultEvent.output // Handle both result and output fields
+                                }
+                                : invocation
+                        );
+
+                        // Return both the updated assistant message and the new tool message
+                        return [
+                            ...prevMessages.slice(0, -1),
+                            { ...lastMessage, toolInvocations: updatedToolInvocations },
+                            toolResultMessage
+                        ];
+                    }
+
+                    // If there's no assistant message to update, just add the tool message
                     return [...prevMessages, toolResultMessage];
                 });
             } catch (error) {
@@ -232,17 +254,13 @@ export function useCustomChat({
                 tool_calls: [],
             };
 
-            setMessages(prev => [...prev, userMessage, aiMessage]);
-
             const payload = {
                 chatId: id,
-                messages: [...messages, userMessage].map((msg) => ({
-                    id: msg.id,
-                    role: msg.role,
-                    content: msg.content,
-                })),
+                messages: [...messages, userMessage],
                 ...chatRequestOptions,
             };
+
+            setMessages(prev => [...prev, userMessage, aiMessage]);
 
             const response = await fetch('/api/chat', {
                 method: 'POST',
