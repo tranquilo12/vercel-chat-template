@@ -14,6 +14,13 @@ export type ExtendedMessage = Message & {
     toolInvocations?: CustomToolInvocation[];
 };
 
+type ConversationFork = {
+    id: string;
+    messages: ExtendedMessage[];
+    parentForkId: string | null;
+    createdAt: Date;
+};
+
 const cleanStreamText = (text: string | undefined) => {
     // Return empty string if text is undefined or null
     if (!text) return '';
@@ -210,6 +217,15 @@ export function useCustomChat({
     id: string;
 }) {
     const [messages, setMessages] = useState<ExtendedMessage[]>(initialMessages as ExtendedMessage[]);
+    const [forks, setForks] = useState<ConversationFork[]>([
+        {
+            id: 'main',
+            messages: initialMessages as ExtendedMessage[],
+            parentForkId: null,
+            createdAt: new Date(),
+        }
+    ]);
+    const [currentForkId, setCurrentForkId] = useState<string>('main');
     const [isLoading, setIsLoading] = useState(false);
     const [input, setInput] = useState('');
     const inputId = `chat-input-${id}`;
@@ -232,14 +248,47 @@ export function useCustomChat({
         setIsLoading(false);
     };
 
+    const createFork = (messageId: string, newContent: string) => {
+        const currentFork = forks.find(f => f.id === currentForkId)!;
+        const messageIndex = currentFork.messages.findIndex(m => m.id === messageId);
+
+        // Create new messages array with edited message
+        const newMessages = [
+            ...currentFork.messages.slice(0, messageIndex),
+            { ...currentFork.messages[messageIndex], content: newContent }
+        ];
+
+        const newForkId = uuidv4();
+        const newFork: ConversationFork = {
+            id: newForkId,
+            messages: newMessages,
+            parentForkId: currentForkId,
+            createdAt: new Date()
+        };
+
+        setForks(prev => [...prev, newFork]);
+        setCurrentForkId(newForkId);
+        setMessages(newMessages);
+
+        return newForkId;
+    };
+
+    const switchFork = (forkId: string) => {
+        const fork = forks.find(f => f.id === forkId);
+        if (fork) {
+            setCurrentForkId(forkId);
+            setMessages(fork.messages);
+        }
+    };
+
     const handleSubmit = async (
         e?: { preventDefault?: () => void },
         chatRequestOptions?: ChatRequestOptions & { messages?: ExtendedMessage[], allowEmptySubmit?: boolean }
     ) => {
         e?.preventDefault?.();
-        
+
         const messageHistory = chatRequestOptions?.messages || messages;
-        
+
         // Only create new user message if not using custom message history
         const updatedMessages = chatRequestOptions?.messages || [...messages, {
             id: uuidv4(),
@@ -316,6 +365,13 @@ export function useCustomChat({
             setInput('');
             abortControllerRef.current = null;
         }
+
+        // Update the current fork's messages
+        setForks(prev => prev.map(fork =>
+            fork.id === currentForkId
+                ? { ...fork, messages: [...updatedMessages, aiMessage] }
+                : fork
+        ));
     };
 
     const append = async (message: ExtendedMessage) => {
@@ -332,5 +388,9 @@ export function useCustomChat({
         stop,
         append,
         inputId,
+        forks,
+        currentForkId,
+        createFork,
+        switchFork,
     };
 }

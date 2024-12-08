@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   Pencil,
+  GitFork,
 } from "lucide-react";
 import { useState, useMemo, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
@@ -325,6 +326,10 @@ export function Chat({
     stop,
     append,
     inputId,
+    forks,
+    currentForkId,
+    createFork,
+    switchFork,
   } = useCustomChat({
     initialMessages,
     id: chatId,
@@ -337,29 +342,45 @@ export function Chat({
 
   // Add this handler
   const handleEditComplete = async (messageId: string, newContent: string) => {
-    const messageIndex = messages.findIndex((m) => m.id === messageId);
-    if (messageIndex === -1) return;
-
-    // Create new message array with edited message and truncate subsequent messages
-    const updatedMessages = messages.slice(0, messageIndex + 1);
-    updatedMessages[messageIndex] = {
-      ...updatedMessages[messageIndex],
-      content: newContent,
-    };
-
-    // Update messages state with truncated history
-    setMessages(updatedMessages);
-    setEditingMessageId(null);
-
+    const newForkId = createFork(messageId, newContent);
+    
     // Trigger new completion with the updated history
     await handleSubmit(undefined, {
-      messages: updatedMessages,
+      messages: forks.find(f => f.id === newForkId)?.messages,
       allowEmptySubmit: true
     });
   };
 
+  // Add Fork Selector component
+  const ForkSelector = () => (
+    <div className="fixed top-0 right-0 p-4">
+      <div className="bg-muted rounded-lg p-2">
+        <div className="flex items-center gap-2 mb-2">
+          <GitFork className="h-4 w-4" />
+          <span className="text-sm font-medium">Conversation Forks</span>
+        </div>
+        <div className="space-y-1">
+          {forks.map(fork => (
+            <button
+              key={fork.id}
+              onClick={() => switchFork(fork.id)}
+              className={cn(
+                "w-full text-left px-2 py-1 rounded text-sm",
+                fork.id === currentForkId ? "bg-primary text-primary-foreground" : "hover:bg-muted/80"
+              )}
+            >
+              {new Date(fork.createdAt).toLocaleTimeString()}
+              {fork.parentForkId && <span className="text-xs ml-2">(Fork)</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex flex-col h-full">
+      <ForkSelector />
       <div
         className="flex-1 overflow-y-auto pb-[200px] pt-16 md:pt-20"
         ref={messagesContainerRef}
