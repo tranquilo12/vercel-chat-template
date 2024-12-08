@@ -115,7 +115,7 @@ const processStreamLine = (
                         id: uuidv4(),
                         role: 'tool' as const,
                         content: JSON.stringify(lastMessage.toolInvocations?.map(invocation => ({
-                            type: 'tool-result',
+                            type: 'tool-result' as const,
                             toolCallId: invocation.toolCallId,
                             toolName: invocation.toolName,
                             result: invocation.args
@@ -130,7 +130,7 @@ const processStreamLine = (
                             toolInvocations: lastMessage.toolInvocations?.map(invocation => ({
                                 ...invocation,
                                 state: 'result' as const,
-                                result: null
+                                result: null as unknown as string
                             }))
                         },
                         toolMessage

@@ -23,6 +23,10 @@ export interface InterpreterResponse {
     };
 }
 
+interface ExtendedCoreMessage extends CoreMessage {
+    toolInvocations?: any[];
+}
+
 export async function POST(req: Request) {
     const body = await req.json();
     const { chatId, messages } = body;
@@ -87,7 +91,7 @@ export async function POST(req: Request) {
                         toolInvocations: msg.toolInvocations || []
                     }));
 
-                    const responseWithTools = responseMessages.map(msg => ({
+                    const responseWithTools = responseMessages.map((msg: ExtendedCoreMessage) => ({
                         ...msg,
                         toolInvocations: msg.toolInvocations || []
                     }));

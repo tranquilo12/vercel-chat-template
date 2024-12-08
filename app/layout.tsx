@@ -5,6 +5,7 @@ import { Navbar } from "@/components/custom/navbar";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
 import "./globals.css";
+import "@/styles/prism.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://chat.vercel.ai"),

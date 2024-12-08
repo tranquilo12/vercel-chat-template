@@ -1,16 +1,37 @@
 "use client";
 
 import { Attachment, Message, CreateMessage, CoreMessage } from "ai";
-import { useState, useMemo } from "react";
+import {
+  Check,
+  Copy,
+  Code,
+  Database,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
+import { useState, useMemo, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 
 import { Markdown } from "@/components/custom/markdown";
 import { useScrollToBottom } from "@/components/custom/use-scroll-to-bottom";
 import { cn } from "@/lib/utils";
+import { highlightCode } from "@/lib/syntax-highlighting";
 
 import { JsonFormatter } from "./JsonFormatter";
 import { MultimodalInput } from "./multimodal-input";
 import { useCustomChat, ExtendedMessage } from "./useCustomChat";
+
+// Instead of redeclaring the Markdown module, create a new interface
+interface CustomMarkdownProps {
+  children: string;
+  components?: {
+    pre: React.FC<{ children: React.ReactNode }>;
+    code: React.FC<{ children: React.ReactNode; className?: string }>;
+  };
+}
+
+// Type assertion for Markdown component
+const MarkdownComponent = Markdown as React.FC<CustomMarkdownProps>;
 
 function MessageContent({
   message,
@@ -105,13 +126,13 @@ function MessageContent({
                     </div>
                   ) : (
                     <div className="prose dark:prose-invert">
-                      <Markdown>
+                      <MarkdownComponent>
                         {typeof tool.result === "object"
                           ? "```json\n" +
                             JSON.stringify(tool.result, null, 2) +
                             "\n```"
                           : String(tool.result)}
-                      </Markdown>
+                      </MarkdownComponent>
                     </div>
                   )}
                 </div>
@@ -119,7 +140,7 @@ function MessageContent({
             ))
           ) : (
             <div className="prose dark:prose-invert">
-              <Markdown>{String(message.content)}</Markdown>
+              <MarkdownComponent>{String(message.content)}</MarkdownComponent>
             </div>
           )}
         </div>
@@ -128,7 +149,7 @@ function MessageContent({
       console.error("Error rendering tool message:", e);
       return (
         <div className="prose dark:prose-invert">
-          <Markdown>{String(message.content)}</Markdown>
+          <MarkdownComponent>{String(message.content)}</MarkdownComponent>
         </div>
       );
     }
@@ -156,7 +177,7 @@ function MessageContent({
       {/* Text Content */}
       {textContent && (
         <div className="prose dark:prose-invert max-w-none break-words">
-          <Markdown>{textContent}</Markdown>
+          <MarkdownComponent>{textContent}</MarkdownComponent>
         </div>
       )}
 
@@ -170,40 +191,110 @@ function MessageContent({
   );
 }
 
+const CopyButton = ({ text }: { text: string }) => {
+  const [copied, setCopied] = useState(false);
+
+  const copy = useCallback(() => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [text]);
+
+  return (
+    <button
+      className="p-2 hover:bg-muted/80 rounded-md transition-colors"
+      onClick={(e) => {
+        e.stopPropagation();
+        copy();
+      }}
+    >
+      {copied ? (
+        <Check className="size-4 text-green-500" />
+      ) : (
+        <Copy className="size-4 text-muted-foreground" />
+      )}
+    </button>
+  );
+};
+
 const ToolDisplay = ({ tool }: { tool: any }) => {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const parsedArgs = useMemo(() => {
+    if (typeof tool.args === "string") {
+      try {
+        return JSON.parse(tool.args);
+      } catch {
+        return null;
+      }
+    }
+    return tool.args;
+  }, [tool.args]);
+
+  const isCodeBlock = parsedArgs?.code && parsedArgs?.output_format;
 
   return (
     <div className="border rounded-lg overflow-hidden bg-muted/50">
-      {/* Tool Header - make it clickable */}
-      <div 
+      <div
         className="border-b px-4 py-2 flex justify-between items-center bg-muted/70 cursor-pointer hover:bg-muted/90 transition-colors"
         onClick={() => setIsExpanded(!isExpanded)}
       >
         <div className="flex items-center gap-2">
+          {/* Tool Icon */}
+          {isCodeBlock ? (
+            <Code className="size-4 text-blue-500" />
+          ) : (
+            <Database className="size-4 text-primary" />
+          )}
+
           <span className="text-sm font-medium">{tool.toolName}</span>
           <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary">
             {tool.state}
           </span>
+          {isCodeBlock && (
+            <span className="text-xs px-2 py-1 rounded-full bg-blue-500/10 text-blue-500">
+              Code
+            </span>
+          )}
         </div>
-        <button className="text-sm text-muted-foreground">
-          {isExpanded ? '▼' : '▶'}
-        </button>
+        <div className="flex items-center gap-2">
+          {isExpanded && isCodeBlock && <CopyButton text={parsedArgs.code} />}
+          {isExpanded ? (
+            <ChevronDown className="size-4 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-4 text-muted-foreground" />
+          )}
+        </div>
       </div>
 
-      {/* Code Section - collapsible */}
       {isExpanded && (
         <div className="p-4 space-y-4">
           <div className="overflow-x-auto">
             <div className="max-w-[calc(100vw-4rem)] md:max-w-[calc(100vw-16rem)]">
-              <JsonFormatter
-                content={
-                  typeof tool.args === "string"
-                    ? tool.args
-                    : JSON.stringify(tool.args)
-                }
-                isStreaming={tool.state === "partial-call"}
-              />
+              {isCodeBlock ? (
+                <div className="prose dark:prose-invert max-w-none relative">
+                  <pre className="relative !bg-[#1e1e1e] !p-4 rounded-lg">
+                    <code
+                      className={`language-${parsedArgs.language || "plaintext"} !bg-transparent`}
+                      dangerouslySetInnerHTML={{
+                        __html: highlightCode(
+                          parsedArgs.code,
+                          parsedArgs.language || "plaintext"
+                        ),
+                      }}
+                    />
+                  </pre>
+                </div>
+              ) : (
+                <JsonFormatter
+                  content={
+                    typeof tool.args === "string"
+                      ? tool.args
+                      : JSON.stringify(tool.args)
+                  }
+                  isStreaming={tool.state === "partial-call"}
+                />
+              )}
             </div>
           </div>
         </div>
