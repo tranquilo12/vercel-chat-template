@@ -1,6 +1,6 @@
 "use client";
 
-import { Attachment, Message, CreateMessage, CoreMessage } from "ai";
+import { Attachment, Message, CreateMessage } from "ai";
 import {
   Check,
   Copy,
@@ -133,8 +133,8 @@ function MessageContent({
                       <MarkdownComponent>
                         {typeof tool.result === "object"
                           ? "```json\n" +
-                            JSON.stringify(tool.result, null, 2) +
-                            "\n```"
+                          JSON.stringify(tool.result, null, 2) +
+                          "\n```"
                           : String(tool.result)}
                       </MarkdownComponent>
                     </div>
@@ -343,7 +343,7 @@ export function Chat({
   // Add this handler
   const handleEditComplete = async (messageId: string, newContent: string) => {
     const newForkId = createFork(messageId, newContent);
-    
+
     // Trigger new completion with the updated history
     await handleSubmit(undefined, {
       messages: forks.find(f => f.id === newForkId)?.messages,
@@ -356,7 +356,7 @@ export function Chat({
     <div className="fixed top-0 right-0 p-4">
       <div className="bg-muted rounded-lg p-2">
         <div className="flex items-center gap-2 mb-2">
-          <GitFork className="h-4 w-4" />
+          <GitFork className="size-4" />
           <span className="text-sm font-medium">Conversation Forks</span>
         </div>
         <div className="space-y-1">
@@ -408,10 +408,11 @@ export function Chat({
                   </div>
                   {message.role === "user" && (
                     <button
+                      title="Edit"
                       onClick={() => setEditingMessageId(message.id)}
                       className="opacity-0 group-hover:opacity-100 transition-opacity"
                     >
-                      <Pencil className="h-4 w-4" />
+                      <Pencil className="size-4" />
                     </button>
                   )}
                 </div>
