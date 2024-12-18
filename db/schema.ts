@@ -1,6 +1,5 @@
-import { Message } from "ai";
-import { InferSelectModel } from "drizzle-orm";
-import { pgTable, varchar, timestamp, json, uuid } from "drizzle-orm/pg-core";
+import { InferSelectModel, sql } from "drizzle-orm";
+import { pgTable, varchar, timestamp, json, uuid, integer } from "drizzle-orm/pg-core";
 
 export const user = pgTable("User", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
@@ -21,13 +20,14 @@ export const chat = pgTable("Chat", {
 
 export const fork = pgTable("Fork", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
+  chatId: uuid("chatId").notNull().references(() => chat.id, { onDelete: 'cascade' }),
+  parentChatId: uuid("parentChatId").references(() => chat.id, { onDelete: 'set null' }),
+  parentMessageId: uuid("parentMessageId").notNull(),
   messages: json("messages").notNull(),
-  parentForkId: uuid("parentForkId").references(() => fork.id),
-  chatId: uuid("chatId").notNull().references(() => chat.id),
-  createdAt: timestamp("createdAt").notNull(),
   title: varchar("title", { length: 255 }),
-  editedMessageId: varchar("editedMessageId", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
   editPoint: json("editPoint").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
 });
 
 export type Chat = InferSelectModel<typeof chat>;

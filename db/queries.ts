@@ -6,7 +6,10 @@ import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
-import { chat, user, User, fork } from "./schema";
+import { ExtendedMessage } from "@/components/custom/useCustomChat";
+import { CreateForkParams } from "@/types/fork";
+
+import { chat, user, User, fork, Fork } from "./schema";
 
 
 // Optionally, if not using email/pass login, you can
@@ -14,6 +17,14 @@ import { chat, user, User, fork } from "./schema";
 // https://authjs.dev/reference/adapter/drizzle
 let client = postgres('postgres://default:sFu6lU5WqohM@ep-sparkling-salad-a42y5o63-pooler.us-east-1.aws.neon.tech/verceldb?sslmode=require')
 let db = drizzle(client);
+
+// First, add type for chat messages at the top of the file
+type ChatMessage = {
+    id: string;
+    role: string;
+    content: string;
+    toolInvocations?: any[];
+};
 
 export async function getUser(email: string): Promise<Array<User>> {
     try {
@@ -138,7 +149,7 @@ export async function getChatForks({ chatId }: { chatId: string }) {
     }
 }
 
-export async function getForkById({ id }: { id: string }) {
+export async function getForkById({ id }: { id: string }): Promise<Fork | null> {
     try {
         const [selectedFork] = await db.select().from(fork).where(eq(fork.id, id));
         return selectedFork;
@@ -167,15 +178,25 @@ export async function saveFork({
     title,
 }: {
     id: string;
-    messages: CoreMessage[];
+    messages: ExtendedMessage[];
     parentForkId?: string;
     chatId: string;
     editedMessageId: string;
-    editPoint: number;
+    editPoint: {
+        messageId: string;
+        originalContent: string;
+        newContent: string;
+        timestamp: string;
+    };
     title?: string;
 }) {
-    if (!id || !messages || !chatId || !editedMessageId) {
+    if (!id || !messages || !chatId || !editedMessageId || !editPoint) {
         throw new Error('Missing required fields for saving fork');
+    }
+
+    // Ensure editPoint has all required fields
+    if (!editPoint.messageId || !editPoint.originalContent || !editPoint.newContent || !editPoint.timestamp) {
+        throw new Error('EditPoint missing required fields');
     }
 
     const normalizedMessages = messages.map(msg => ({
@@ -189,27 +210,118 @@ export async function saveFork({
         const selectedForks = await db.select().from(fork).where(eq(fork.id, id));
 
         if (selectedForks.length > 0) {
+            // For existing forks, maintain the original editPoint
             return await db
                 .update(fork)
                 .set({
                     messages: JSON.stringify(normalizedMessages),
                     title: title || selectedForks[0].title,
+                    status: 'submitted'
                 })
                 .where(eq(fork.id, id));
         }
 
+        // For new forks
         return await db.insert(fork).values({
             id,
-            messages: JSON.stringify(normalizedMessages),
-            parentForkId,
             chatId,
-            createdAt: new Date(),
+            parentMessageId: editedMessageId,
+            messages: JSON.stringify(normalizedMessages),
+            editPoint: editPoint, // Don't stringify - let Drizzle handle the JSONB conversion
             title: title || `Fork at message ${editedMessageId}`,
-            editedMessageId,
-            editPoint,
+            createdAt: new Date(),
+            status: 'draft'
         });
     } catch (error) {
-        console.error("Failed to save fork in database");
+        console.error("Failed to save fork in database:", error);
+        throw error;
+    }
+}
+
+export async function createFork({
+    chatId,
+    parentChatId,
+    parentMessageId,
+    messages,
+    title,
+    editPoint,
+}: CreateForkParams) {
+    try {
+        const [newFork] = await db.insert(fork).values({
+            chatId,
+            parentChatId,
+            parentMessageId,
+            messages: JSON.stringify(messages),
+            title: title || `Fork from ${parentMessageId}`,
+            editPoint,
+            status: 'draft'
+        }).returning();
+
+        return newFork;
+    } catch (error) {
+        console.error("Failed to create fork:", error);
+        throw error;
+    }
+}
+
+export async function updateForkStatus({
+    id,
+    status,
+}: {
+    id: string;
+    status: 'draft' | 'submitted';
+}) {
+    try {
+        const [updatedFork] = await db
+            .update(fork)
+            .set({ status })
+            .where(eq(fork.id, id))
+            .returning();
+
+        return updatedFork;
+    } catch (error) {
+        console.error("Failed to update fork status:", error);
+        throw error;
+    }
+}
+
+export async function updateChatMessage({
+    chatId,
+    messageId,
+    content,
+}: {
+    chatId: string;
+    messageId: string;
+    content: string;
+}) {
+    try {
+        const [selectedChat] = await db
+            .select()
+            .from(chat)
+            .where(eq(chat.id, chatId));
+
+        if (!selectedChat) throw new Error('Chat not found');
+
+        // Safely parse messages string or handle object
+        const messages = typeof selectedChat.messages === 'string'
+            ? JSON.parse(selectedChat.messages)
+            : selectedChat.messages as ChatMessage[];
+
+        const updatedMessages = messages.map((msg: ChatMessage) =>
+            msg.id === messageId ? { ...msg, content } : msg
+        );
+
+        const [updatedChat] = await db
+            .update(chat)
+            .set({
+                messages: JSON.stringify(updatedMessages)
+            })
+            .where(eq(chat.id, chatId))
+            .returning();
+
+        return updatedChat;
+    } catch (error) {
+        console.error("Failed to update chat message:", error);
         throw error;
     }
 }

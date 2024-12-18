@@ -202,20 +202,36 @@ const processStreamLine = (
     }
 };
 
+interface UseCustomChatProps {
+    initialMessages: Array<Message>;
+    id: string;
+    title?: string;
+    parentChatId?: string;
+    forkedFromMessageId?: string;
+    forkId?: string;
+    editPoint?: { messageId: string; originalContent: string; newContent: string; timestamp: string };
+    isFork?: boolean;
+    status?: 'draft' | 'submitted';
+    initialEditingMessageId?: string;
+}
+
 export function useCustomChat({
     initialMessages,
     id,
+    title,
     parentChatId,
     forkedFromMessageId,
-    title,
-}: {
-    initialMessages: Array<Message>;
-    id: string;
-    parentChatId?: string;
-    forkedFromMessageId?: string;
-    title?: string;
-}) {
-    const [messages, setMessages] = useState<ExtendedMessage[]>(initialMessages as ExtendedMessage[]);
+    forkId,
+    editPoint,
+    isFork,
+    status,
+    initialEditingMessageId,
+}: UseCustomChatProps) {
+    const [messages, setMessages] = useState<ExtendedMessage[]>(initialMessages);
+    const [isEditing, setIsEditing] = useState(isFork && status === 'draft');
+    const [editingMessageId, setEditingMessageId] = useState<string | null>(
+        isFork && status === 'draft' ? initialEditingMessageId || null : null
+    );
     const [isLoading, setIsLoading] = useState(false);
     const [input, setInput] = useState('');
     const inputId = `chat-input-${id}`;
@@ -230,6 +246,13 @@ export function useCustomChat({
         };
     }, []);
 
+    useEffect(() => {
+        if (isFork && status === 'draft' && initialEditingMessageId) {
+            setEditingMessageId(initialEditingMessageId);
+            setIsEditing(true);
+        }
+    }, [isFork, status, initialEditingMessageId]);
+
     const stop = () => {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
@@ -238,23 +261,85 @@ export function useCustomChat({
         setIsLoading(false);
     };
 
+    const handleDraftEdit = async (messageId: string, newContent: string) => {
+        if (!isFork || !forkId) return;
+
+        const messageIndex = messages.findIndex((m) => m.id === messageId);
+        if (messageIndex === -1) return;
+
+        const updatedMessages = [...messages];
+        updatedMessages[messageIndex] = {
+            ...updatedMessages[messageIndex],
+            content: newContent,
+        };
+
+        setMessages(updatedMessages);
+        setEditingMessageId(null);
+
+        try {
+            // First save the fork with updated messages
+            await fetch('/api/fork', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: forkId,
+                    messages: updatedMessages,
+                    editPoint: {
+                        messageId,
+                        originalContent: messages[messageIndex].content,
+                        newContent,
+                        timestamp: new Date().toISOString()
+                    }
+                }),
+            });
+
+            // Then submit the fork to continue the conversation
+            await handleSubmit(undefined, {
+                submitDraft: true,
+                allowEmptySubmit: true,
+                messages: updatedMessages,
+                forkChat: false
+            });
+
+        } catch (error) {
+            console.error('Failed to update fork:', error);
+        }
+    };
+
     const handleSubmit = async (
         e?: { preventDefault?: () => void },
         chatRequestOptions?: ChatRequestOptions & {
             forkChat?: boolean;
             newTitle?: string;
+            submitDraft?: boolean;
+            editedMessageId?: string;
+            editPoint?: {
+                messageId: string;
+                originalContent: string;
+                newContent: string;
+                timestamp: string;
+            };
+            messages?: Message[];
         }
     ) => {
         e?.preventDefault?.();
-        if (!input.trim() && !chatRequestOptions?.allowEmptySubmit) return;
+
+        // Use provided messages or current input for submission
+        const submissionMessages = chatRequestOptions?.messages || messages;
+        const shouldSubmitEmpty = chatRequestOptions?.allowEmptySubmit;
+
+        if (!input.trim() && !shouldSubmitEmpty) return;
 
         setIsLoading(true);
         try {
-            const userMessage: ExtendedMessage = {
-                id: uuidv4(),
-                role: 'user',
-                content: input,
-            };
+            // Only add new user message if we have input
+            const updatedMessages = input.trim()
+                ? [...submissionMessages, {
+                    id: uuidv4(),
+                    role: 'user',
+                    content: input,
+                } as ExtendedMessage]
+                : submissionMessages;
 
             const aiMessage: ExtendedMessage = {
                 id: uuidv4(),
@@ -263,21 +348,26 @@ export function useCustomChat({
                 tool_calls: [],
             };
 
-            // If we're forking, create a new chat ID
-            const targetChatId = chatRequestOptions?.forkChat ? uuidv4() : id;
-
             const payload = {
-                chatId: targetChatId,
-                messages: [...messages, userMessage],
-                parentChatId: chatRequestOptions?.forkChat ? id : parentChatId,
-                forkedFromMessageId: chatRequestOptions?.forkChat ? userMessage.id : forkedFromMessageId,
-                title: chatRequestOptions?.newTitle || title,
                 ...chatRequestOptions,
+                messages: updatedMessages,
+                editedMessageId: forkedFromMessageId || editPoint?.messageId,
+                editPoint: editPoint || {
+                    messageId: updatedMessages[updatedMessages.length - 1]?.id,
+                    originalContent: updatedMessages[updatedMessages.length - 1]?.content,
+                    newContent: updatedMessages[updatedMessages.length - 1]?.content,
+                    timestamp: new Date().toISOString()
+                }
             };
 
-            setMessages(prev => [...prev, userMessage, aiMessage]);
+            setMessages(prev => [...updatedMessages, aiMessage]);
 
-            const response = await fetch('/api/chat', {
+            // Determine the correct endpoint based on whether we're in a fork
+            const endpoint = isFork && forkId
+                ? `/api/chat/${id}/fork/${forkId}`
+                : '/api/chat';
+
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
@@ -286,6 +376,25 @@ export function useCustomChat({
                 if (!res.ok) throw new Error(res.statusText);
                 return res;
             });
+
+            if (!response.ok) throw new Error('Failed to send message');
+
+            // Update both chat and fork after processing the response
+            if (isFork && forkId) {
+                // Get the final messages after processing the response
+                const finalMessages = messages.concat(aiMessage);
+
+                // Update the fork with the latest messages
+                await fetch('/api/fork', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: forkId,
+                        messages: finalMessages,
+                        status: 'submitted'
+                    }),
+                });
+            }
 
             const reader = response.body?.getReader();
             const decoder = new TextDecoder();
@@ -338,6 +447,58 @@ export function useCustomChat({
         setMessages((prev) => [...prev, message]);
     };
 
+    const handleDirectEdit = async (messageId: string, newContent: string) => {
+        // Update local message state
+        const updatedMessages = messages.map(msg =>
+            msg.id === messageId
+                ? { ...msg, content: newContent }
+                : msg
+        );
+        setMessages(updatedMessages);
+
+        try {
+            // First save the edit
+            await fetch('/api/chat/edit', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chatId: id,
+                    messageId,
+                    newContent,
+                    isFork: isFork,
+                    forkId: forkId
+                })
+            });
+
+            // Then trigger a new completion with the updated messages
+            if (isFork) {
+                await handleSubmit(undefined, {
+                    submitDraft: true,
+                    allowEmptySubmit: true,
+                    messages: updatedMessages,
+                    forkChat: false,
+                    editedMessageId: messageId,
+                    editPoint: {
+                        messageId,
+                        originalContent: messages.find(m => m.id === messageId)?.content || '',
+                        newContent,
+                        timestamp: new Date().toISOString()
+                    }
+                });
+            } else {
+                // For non-fork direct edits, trigger normal completion
+                await handleSubmit(undefined, {
+                    allowEmptySubmit: true,
+                    messages: updatedMessages,
+                });
+            }
+        } catch (error) {
+            console.error('Failed to save edit:', error);
+            // Optionally revert the local message state on error
+            setMessages(messages);
+        }
+    };
+
     return {
         messages,
         setMessages,
@@ -345,10 +506,17 @@ export function useCustomChat({
         input,
         setInput,
         isLoading,
+        setIsLoading,
         stop,
         append,
         inputId,
         parentChatId,
         forkedFromMessageId,
+        isEditing,
+        setIsEditing,
+        handleDraftEdit,
+        editingMessageId,
+        setEditingMessageId,
+        handleDirectEdit,
     };
 }
