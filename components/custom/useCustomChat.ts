@@ -205,9 +205,15 @@ const processStreamLine = (
 export function useCustomChat({
     initialMessages,
     id,
+    parentChatId,
+    forkedFromMessageId,
+    title,
 }: {
     initialMessages: Array<Message>;
     id: string;
+    parentChatId?: string;
+    forkedFromMessageId?: string;
+    title?: string;
 }) {
     const [messages, setMessages] = useState<ExtendedMessage[]>(initialMessages as ExtendedMessage[]);
     const [isLoading, setIsLoading] = useState(false);
@@ -234,10 +240,13 @@ export function useCustomChat({
 
     const handleSubmit = async (
         e?: { preventDefault?: () => void },
-        chatRequestOptions?: ChatRequestOptions
+        chatRequestOptions?: ChatRequestOptions & {
+            forkChat?: boolean;
+            newTitle?: string;
+        }
     ) => {
         e?.preventDefault?.();
-        if (!input.trim()) return;
+        if (!input.trim() && !chatRequestOptions?.allowEmptySubmit) return;
 
         setIsLoading(true);
         try {
@@ -254,9 +263,15 @@ export function useCustomChat({
                 tool_calls: [],
             };
 
+            // If we're forking, create a new chat ID
+            const targetChatId = chatRequestOptions?.forkChat ? uuidv4() : id;
+
             const payload = {
-                chatId: id,
+                chatId: targetChatId,
                 messages: [...messages, userMessage],
+                parentChatId: chatRequestOptions?.forkChat ? id : parentChatId,
+                forkedFromMessageId: chatRequestOptions?.forkChat ? userMessage.id : forkedFromMessageId,
+                title: chatRequestOptions?.newTitle || title,
                 ...chatRequestOptions,
             };
 
@@ -333,5 +348,7 @@ export function useCustomChat({
         stop,
         append,
         inputId,
+        parentChatId,
+        forkedFromMessageId,
     };
 }

@@ -1,5 +1,5 @@
 /* eslint-disable import/order */
-import { convertToCoreMessages, CoreMessage, JSONValue, StreamData, streamText } from 'ai';
+import { convertToCoreMessages, CoreMessage, JSONValue, StreamData, streamText, CoreAssistantMessage, CoreToolMessage } from 'ai';
 
 import { openaiModel } from '@/ai';
 import { auth } from '@/app/(auth)/auth';
@@ -23,13 +23,20 @@ export interface InterpreterResponse {
     };
 }
 
-interface ExtendedCoreMessage extends CoreMessage {
-    toolInvocations?: any[];
-}
+// Define a type that includes toolInvocations
+type MessageWithTools = CoreAssistantMessage | CoreToolMessage & {
+    toolInvocations?: Array<{
+        toolCallId: string;
+        toolName: string;
+        args: string;
+        state: 'call' | 'result' | 'partial-call';
+        result?: string;
+    }>;
+};
 
 export async function POST(req: Request) {
     const body = await req.json();
-    const { chatId, messages } = body;
+    const { chatId, messages, parentChatId, forkedFromMessageId, title } = body;
 
     const session = await auth();
     if (!session) {
@@ -85,15 +92,14 @@ export async function POST(req: Request) {
         onFinish: async ({ steps, responseMessages }) => {
             if (session.user && session.user.id) {
                 try {
-                    // Ensure tool invocations are included in the messages
-                    const messagesWithTools = messages.map((msg: { toolInvocations: any; }) => ({
+                    const messagesWithTools = messages.map((msg: any) => ({
                         ...msg,
                         toolInvocations: msg.toolInvocations || []
                     }));
 
-                    const responseWithTools = responseMessages.map((msg: ExtendedCoreMessage) => ({
+                    const responseWithTools = (responseMessages as MessageWithTools[]).map(msg => ({
                         ...msg,
-                        toolInvocations: msg.toolInvocations || []
+                        toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : []
                     }));
 
                     await saveChat({

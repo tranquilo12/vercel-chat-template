@@ -6,7 +6,7 @@ import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
-import { chat, user, User } from "./schema";
+import { chat, user, User, fork } from "./schema";
 
 
 // Optionally, if not using email/pass login, you can
@@ -49,7 +49,6 @@ export async function saveChat({
         throw new Error('Missing required fields for saving chat');
     }
 
-    // Normalize the messages before storing, ensuring tool messages are included
     const normalizedMessages = messages.map(msg => ({
         ...msg,
         content: msg.content,
@@ -122,6 +121,95 @@ export async function getChatById({ id }: { id: string }) {
         return selectedChat;
     } catch (error) {
         console.error("Failed to get chat by id from database");
+        throw error;
+    }
+}
+
+export async function getChatForks({ chatId }: { chatId: string }) {
+    try {
+        return await db
+            .select()
+            .from(fork)
+            .where(eq(fork.chatId, chatId))
+            .orderBy(desc(fork.createdAt));
+    } catch (error) {
+        console.error("Failed to get chat forks from database");
+        throw error;
+    }
+}
+
+export async function getForkById({ id }: { id: string }) {
+    try {
+        const [selectedFork] = await db.select().from(fork).where(eq(fork.id, id));
+        return selectedFork;
+    } catch (error) {
+        console.error("Failed to get fork by id from database");
+        throw error;
+    }
+}
+
+export async function deleteForkById({ id }: { id: string }) {
+    try {
+        return await db.delete(fork).where(eq(fork.id, id));
+    } catch (error) {
+        console.error("Failed to delete fork by id from database");
+        throw error;
+    }
+}
+
+export async function saveFork({
+    id,
+    messages,
+    parentForkId,
+    chatId,
+    editedMessageId,
+    editPoint,
+    title,
+}: {
+    id: string;
+    messages: CoreMessage[];
+    parentForkId?: string;
+    chatId: string;
+    editedMessageId: string;
+    editPoint: number;
+    title?: string;
+}) {
+    if (!id || !messages || !chatId || !editedMessageId) {
+        throw new Error('Missing required fields for saving fork');
+    }
+
+    const normalizedMessages = messages.map(msg => ({
+        ...msg,
+        content: msg.content,
+        toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : [],
+        role: msg.role
+    }));
+
+    try {
+        const selectedForks = await db.select().from(fork).where(eq(fork.id, id));
+
+        if (selectedForks.length > 0) {
+            return await db
+                .update(fork)
+                .set({
+                    messages: JSON.stringify(normalizedMessages),
+                    title: title || selectedForks[0].title,
+                })
+                .where(eq(fork.id, id));
+        }
+
+        return await db.insert(fork).values({
+            id,
+            messages: JSON.stringify(normalizedMessages),
+            parentForkId,
+            chatId,
+            createdAt: new Date(),
+            title: title || `Fork at message ${editedMessageId}`,
+            editedMessageId,
+            editPoint,
+        });
+    } catch (error) {
+        console.error("Failed to save fork in database");
         throw error;
     }
 }

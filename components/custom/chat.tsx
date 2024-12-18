@@ -306,9 +306,15 @@ const ToolDisplay = ({ tool }: { tool: any }) => {
 export function Chat({
   id,
   initialMessages,
+  parentChatId,
+  forkedFromMessageId,
+  title,
 }: {
   id: string;
   initialMessages: Array<ExtendedMessage>;
+  parentChatId?: string;
+  forkedFromMessageId?: string;
+  title?: string;
 }) {
   const chatId = id || uuidv4();
 
@@ -325,6 +331,9 @@ export function Chat({
   } = useCustomChat({
     initialMessages,
     id: chatId,
+    parentChatId,
+    forkedFromMessageId,
+    title,
   });
 
   const [messagesContainerRef, messagesEndRef] =
@@ -353,6 +362,22 @@ export function Chat({
     });
   };
 
+  const handleFork = async (messageId: string) => {
+    const messageIndex = messages.findIndex((m) => m.id === messageId);
+    if (messageIndex === -1) return;
+
+    // Create a new chat with messages up to the fork point
+    const forkedMessages = messages.slice(0, messageIndex + 1);
+    setMessages(forkedMessages);
+    
+    // Trigger new completion with fork parameters
+    await handleSubmit(undefined, {
+      forkChat: true,
+      newTitle: `Fork from ${messageId}`,
+      allowEmptySubmit: true,
+    });
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div
@@ -376,8 +401,18 @@ export function Chat({
                     : "bg-muted text-muted-foreground"
                 )}
               >
-                <div className="text-sm font-semibold">
-                  {message.role === "user" ? "You" : "Assistant"}
+                <div className="flex justify-between items-center">
+                  <div className="text-sm font-semibold">
+                    {message.role === "user" ? "You" : "Assistant"}
+                  </div>
+                  {message.role === "user" && (
+                    <button
+                      onClick={() => handleFork(message.id)}
+                      className="text-xs px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 transition-colors"
+                    >
+                      Fork
+                    </button>
+                  )}
                 </div>
                 <MessageContent
                   message={message}
