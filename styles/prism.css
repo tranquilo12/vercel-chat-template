@@ -3,13 +3,24 @@
 .syntax-highlighted {
   background: transparent !important;
   padding: 0 !important;
+  white-space: pre;
+  word-spacing: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+  line-height: 1.5;
+  tab-size: 4;
+  -webkit-hyphens: none;
+  -moz-hyphens: none;
+  -ms-hyphens: none;
+  hyphens: none;
 }
 
 /* Base styling */
 pre[class*="language-"],
 code[class*="language-"] {
   color: #d4d4d4;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
   direction: ltr;
   text-align: left;
   white-space: pre;
@@ -103,4 +114,11 @@ pre[class*="language-"] {
 .dark code[class*="language-"] {
   background: #1e1e1e !important;
   color: #d4d4d4;
+}
+
+/* Ensure code blocks maintain spacing */
+.syntax-highlighted code {
+  display: block;
+  overflow-x: auto;
+  padding: 1em;
 }

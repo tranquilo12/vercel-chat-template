@@ -9,7 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 
 import { Markdown } from "@/components/custom/markdown";
@@ -90,6 +90,22 @@ function MessageContent({
     };
   }, [parsedContent, message.content, message.toolInvocations]);
 
+  // Add ref for code elements
+  const codeRef = useRef<HTMLDivElement>(null);
+
+  // Move code highlighting to client-side only
+  useEffect(() => {
+    if (codeRef.current) {
+      const codeBlocks = codeRef.current.querySelectorAll('pre code');
+      codeBlocks.forEach((block) => {
+        if (block.className.includes('language-')) {
+          const language = block.className.split('language-')[1]?.split(' ')[0] || 'plaintext';
+          block.innerHTML = highlightCode(block.textContent || '', language);
+        }
+      });
+    }
+  }, [message.content]);
+
   // Handle tool role messages
   if (message.role === "tool") {
     try {
@@ -129,8 +145,8 @@ function MessageContent({
                       <MarkdownComponent>
                         {typeof tool.result === "object"
                           ? "```json\n" +
-                            JSON.stringify(tool.result, null, 2) +
-                            "\n```"
+                          JSON.stringify(tool.result, null, 2) +
+                          "\n```"
                           : String(tool.result)}
                       </MarkdownComponent>
                     </div>
@@ -173,7 +189,7 @@ function MessageContent({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" ref={codeRef}>
       {/* Text Content */}
       {textContent && (
         <div className="prose dark:prose-invert max-w-none break-words">
@@ -219,6 +235,7 @@ const CopyButton = ({ text }: { text: string }) => {
 
 const ToolDisplay = ({ tool }: { tool: any }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  const codeRef = useRef<HTMLPreElement>(null);
 
   const parsedArgs = useMemo(() => {
     if (typeof tool.args === "string") {
@@ -232,6 +249,16 @@ const ToolDisplay = ({ tool }: { tool: any }) => {
   }, [tool.args]);
 
   const isCodeBlock = parsedArgs?.code && parsedArgs?.output_format;
+
+  useEffect(() => {
+    if (codeRef.current && isCodeBlock) {
+      const codeElement = codeRef.current.querySelector('code');
+      if (codeElement) {
+        const language = parsedArgs.language || 'plaintext';
+        codeElement.innerHTML = highlightCode(parsedArgs.code, language);
+      }
+    }
+  }, [isCodeBlock, isExpanded, parsedArgs.code, parsedArgs.language]);
 
   return (
     <div className="border rounded-lg overflow-hidden bg-muted/50">
@@ -273,16 +300,10 @@ const ToolDisplay = ({ tool }: { tool: any }) => {
             <div className="max-w-[calc(100vw-4rem)] md:max-w-[calc(100vw-16rem)]">
               {isCodeBlock ? (
                 <div className="prose dark:prose-invert max-w-none relative">
-                  <pre className="relative !bg-[#1e1e1e] !p-4 rounded-lg">
-                    <code
-                      className={`language-${parsedArgs.language || "plaintext"} !bg-transparent`}
-                      dangerouslySetInnerHTML={{
-                        __html: highlightCode(
-                          parsedArgs.code,
-                          parsedArgs.language || "plaintext"
-                        ),
-                      }}
-                    />
+                  <pre className="text-sm w-[80dvw] md:max-w-[500px] overflow-x-scroll bg-zinc-100 dark:bg-zinc-800 p-3 rounded-md">
+                    <code className={parsedArgs.language || "plaintext"}>
+                      {parsedArgs.code}
+                    </code>
                   </pre>
                 </div>
               ) : (
@@ -369,7 +390,7 @@ export function Chat({
     // Create a new chat with messages up to the fork point
     const forkedMessages = messages.slice(0, messageIndex + 1);
     setMessages(forkedMessages);
-    
+
     // Trigger new completion with fork parameters
     await handleSubmit(undefined, {
       forkChat: true,
