@@ -46,34 +46,22 @@ export default async function Page({ params }: { params: any }) {
   }
 
   const chatId = params.id || uuidv4();
+  const chatData = params.id ? await getChatById({ id: chatId }) : null;
 
-  let chatData = null;
-  if (params.id) {
-    chatData = await getChatById({ id: params.id });
-    if (!chatData) {
-      return notFound();
-    }
-
-    // Check ownership
-    if (chatData.userId !== session.user.id) {
-      return notFound();
-    }
+  if (params.id && !chatData) {
+    return notFound();
   }
 
-  const preprocessedMessages = params.id
-    ? (Array.isArray(chatData?.messages) ? chatData.messages : []).map(preprocessMessage) as Array<CoreMessage>
-    : [];
-
-  const chat = params.id
-    ? {
-      ...chatData,
-      messages: convertToUIMessages(preprocessedMessages),
-    }
-    : {
-      id: chatId,
-      messages: [],
-      userId: session.user.id,
-    };
-
-  return <PreviewChat id={chat.id} initialMessages={chat.messages} />;
+  return (
+    <div className="flex h-full">
+      <div className="flex-1">
+        <PreviewChat
+          id={chatId}
+          initialMessages={
+            chatData ? convertToUIMessages(chatData.messages as CoreMessage[]) : []
+          }
+        />
+      </div>
+    </div>
+  );
 }

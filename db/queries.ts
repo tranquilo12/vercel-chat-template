@@ -202,7 +202,7 @@ export async function deleteForkById({ id }: { id: string }) {
     try {
         return await db.delete(fork).where(eq(fork.id, id));
     } catch (error) {
-        console.error("Failed to delete fork by id from database");
+        console.error("Failed to delete fork by id from database", error);
         throw error;
     }
 }

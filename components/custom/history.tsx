@@ -2,6 +2,7 @@
 
 import * as VisuallyHidden from "@radix-ui/react-visually-hidden";
 import cx from "classnames";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { User } from "next-auth";
@@ -11,6 +12,7 @@ import useSWR from "swr";
 
 import { Chat } from "@/db/schema";
 import { fetcher, getTitleFromChat } from "@/lib/utils";
+import { Fork } from "@/types/fork";
 
 import {
   InfoIcon,
@@ -36,19 +38,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "../ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "../ui/sheet";
 
 export const History = ({ user }: { user: User | undefined }) => {
-  const { id } = useParams();
+  const { id, forkId } = useParams();
   const pathname = usePathname();
-
+  const [expandedChats, setExpandedChats] = useState<Set<string>>(new Set());
   const [isHistoryVisible, setIsHistoryVisible] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isDeleteFork, setIsDeleteFork] = useState(false);
+
   const {
     data: history,
     isLoading,
@@ -57,29 +57,48 @@ export const History = ({ user }: { user: User | undefined }) => {
     fallbackData: [],
   });
 
-  useEffect(() => {
-    mutate();
-  }, [pathname, mutate]);
+  // Fetch forks for each chat
+  const { data: forksByChat } = useSWR<Record<string, Fork[]>>(
+    user && history?.length ? `/api/forks-by-chat` : null,
+    async () => {
+      const forks: Record<string, Fork[]> = {};
+      for (const chat of history || []) {
+        const res = await fetch(`/api/fork?chatId=${chat.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          forks[chat.id] = data.forks;
+        }
+      }
+      return forks;
+    }
+  );
 
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const toggleChatExpansion = (chatId: string) => {
+    setExpandedChats(prev => {
+      const next = new Set(prev);
+      if (next.has(chatId)) {
+        next.delete(chatId);
+      } else {
+        next.add(chatId);
+      }
+      return next;
+    });
+  };
 
   const handleDelete = async () => {
-    const deletePromise = fetch(`/api/chat?id=${deleteId}`, {
-      method: "DELETE",
-    });
+    const endpoint = isDeleteFork
+      ? `/api/fork?id=${deleteId}`
+      : `/api/chat?id=${deleteId}`;
+
+    const deletePromise = fetch(endpoint, { method: "DELETE" });
 
     toast.promise(deletePromise, {
-      loading: "Deleting chat...",
+      loading: `Deleting ${isDeleteFork ? 'fork' : 'chat'}...`,
       success: () => {
-        mutate((history) => {
-          if (history) {
-            return history.filter((h) => h.id !== id);
-          }
-        });
-        return "Chat deleted successfully";
+        mutate();
+        return `${isDeleteFork ? 'Fork' : 'Chat'} deleted successfully`;
       },
-      error: "Failed to delete chat",
+      error: `Failed to delete ${isDeleteFork ? 'fork' : 'chat'}`,
     });
 
     setShowDeleteDialog(false);
@@ -90,19 +109,12 @@ export const History = ({ user }: { user: User | undefined }) => {
       <Button
         variant="outline"
         className="p-1.5 h-fit"
-        onClick={() => {
-          setIsHistoryVisible(true);
-        }}
+        onClick={() => setIsHistoryVisible(true)}
       >
         <MenuIcon />
       </Button>
 
-      <Sheet
-        open={isHistoryVisible}
-        onOpenChange={(state) => {
-          setIsHistoryVisible(state);
-        }}
-      >
+      <Sheet open={isHistoryVisible} onOpenChange={setIsHistoryVisible}>
         <SheetContent side="left" className="p-3 w-80 bg-muted">
           <SheetHeader>
             <VisuallyHidden.Root>
@@ -165,53 +177,108 @@ export const History = ({ user }: { user: User | undefined }) => {
 
               {history &&
                 history.map((chat) => (
-                  <div
-                    key={chat.id}
-                    className={cx(
-                      "flex flex-row items-center gap-6 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-md pr-2",
-                      { "bg-zinc-200 dark:bg-zinc-700": chat.id === id },
-                    )}
-                  >
-                    <Button
-                      variant="ghost"
+                  <div key={chat.id} className="flex flex-col">
+                    <div
                       className={cx(
-                        "hover:bg-zinc-200 dark:hover:bg-zinc-700 justify-between p-0 text-sm font-normal flex flex-row items-center gap-2 pr-2 w-full transition-none",
+                        "flex flex-row items-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-md pr-2",
+                        { "bg-zinc-200 dark:bg-zinc-700": chat.id === id && !forkId }
                       )}
-                      asChild
                     >
-                      <Link
-                        href={`/chat/${chat.id}`}
-                        className="text-ellipsis overflow-hidden text-left py-2 pl-2 rounded-lg outline-zinc-900"
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-6"
+                        onClick={() => toggleChatExpansion(chat.id)}
                       >
-                        {getTitleFromChat(chat)}
-                      </Link>
-                    </Button>
+                        {expandedChats.has(chat.id) ? (
+                          <ChevronDown className="size-4" />
+                        ) : (
+                          <ChevronRight className="size-4" />
+                        )}
+                      </Button>
 
-                    <DropdownMenu modal={true}>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          className="p-0 h-fit font-normal text-zinc-500 transition-none hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                          variant="ghost"
+                      <Button
+                        variant="ghost"
+                        className={cx(
+                          "justify-between p-0 text-sm font-normal flex flex-row items-center gap-2 pr-2 w-full transition-none",
+                        )}
+                        asChild
+                      >
+                        <Link
+                          href={`/chat/${chat.id}`}
+                          className="text-ellipsis overflow-hidden text-left py-2 pl-2 rounded-lg outline-zinc-900"
                         >
-                          <MoreHorizontalIcon />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent side="left" className="z-[60]">
-                        <DropdownMenuItem asChild>
+                          {getTitleFromChat(chat)}
+                        </Link>
+                      </Button>
+
+                      <DropdownMenu modal={true}>
+                        <DropdownMenuTrigger asChild>
                           <Button
-                            className="flex flex-row gap-2 items-center justify-start w-full h-fit font-normal p-1.5 rounded-sm"
+                            className="p-0 h-fit font-normal text-zinc-500 transition-none hover:bg-zinc-200 dark:hover:bg-zinc-700"
                             variant="ghost"
-                            onClick={() => {
-                              setDeleteId(chat.id);
-                              setShowDeleteDialog(true);
-                            }}
                           >
-                            <TrashIcon />
-                            <div>Delete</div>
+                            <MoreHorizontalIcon />
                           </Button>
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent side="left" className="z-[60]">
+                          <DropdownMenuItem asChild>
+                            <Button
+                              className="flex flex-row gap-2 items-center justify-start w-full h-fit font-normal p-1.5 rounded-sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setDeleteId(chat.id);
+                                setIsDeleteFork(false);
+                                setShowDeleteDialog(true);
+                              }}
+                            >
+                              <TrashIcon />
+                              <div>Delete</div>
+                            </Button>
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                    {/* Forks Section */}
+                    {expandedChats.has(chat.id) && forksByChat && forksByChat[chat.id]?.length > 0 && (
+                      <div className="ml-6 mt-1 space-y-1">
+                        {forksByChat[chat.id]?.map((fork) => (
+                          <div
+                            key={fork.id}
+                            className={cx(
+                              "flex flex-row items-center gap-2 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-md pr-2",
+                              { "bg-zinc-200 dark:bg-zinc-700": fork.id === forkId }
+                            )}
+                          >
+                            <Button
+                              variant="ghost"
+                              className="justify-between p-0 text-sm font-normal flex flex-row items-center gap-2 pr-2 w-full transition-none"
+                              asChild
+                            >
+                              <Link
+                                href={`/chat/${chat.id}/fork/${fork.id}`}
+                                className="text-ellipsis overflow-hidden text-left py-2 pl-2 rounded-lg outline-zinc-900"
+                              >
+                                {fork.title || `Fork ${new Date(fork.createdAt).toLocaleDateString()}`}
+                              </Link>
+                            </Button>
+
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-6"
+                              onClick={() => {
+                                setDeleteId(fork.id);
+                                setIsDeleteFork(true);
+                                setShowDeleteDialog(true);
+                              }}
+                            >
+                              <TrashIcon size={14} />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
             </div>
@@ -225,14 +292,12 @@ export const History = ({ user }: { user: User | undefined }) => {
             <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
             <AlertDialogDescription>
               This action cannot be undone. This will permanently delete your
-              chat and remove it from our servers.
+              {isDeleteFork ? ' fork' : ' chat'} and remove it from our servers.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>
-              Continue
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handleDelete}>Continue</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

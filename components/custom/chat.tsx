@@ -443,27 +443,27 @@ export function Chat({
     handleForkSelect,
     isDiffExpanded
   } = useForkState({
-    initialFork: forkId ? {
-      id: forkId,
-      chatId: id,
-      parentMessageId: forkedFromMessageId || '',
-      messageDiffs: [],
-      messages: initialMessages as ExtendedMessage[],
-      baseMessages: initialMessages as ExtendedMessage[],
-      appendedMessages: [],
-      ancestry: [],
-      editPoint: editPoint as MessageDiff,
-      status: status || 'draft',
-      createdAt: new Date()
-    } : undefined,
-    forkChain
+    initialFork: forkId
+      ? {
+        id: forkId,
+        chatId: id,
+        parentMessageId: forkedFromMessageId || "",
+        messageDiffs: [],
+        messages: initialMessages as ExtendedMessage[],
+        baseMessages: initialMessages as ExtendedMessage[],
+        appendedMessages: [],
+        ancestry: [],
+        editPoint: editPoint as MessageDiff,
+        status: status || "draft",
+        createdAt: new Date(),
+      }
+      : undefined,
+    forkChain,
   });
 
-
-  const [messagesContainerRef, messagesEndRef] =
-    useScrollToBottom<HTMLDivElement>();
+  const [messagesContainerRef, messagesEndRef] = useScrollToBottom<HTMLDivElement>();
   const [attachments, setAttachments] = useState<Array<Attachment>>([]);
-  const [editMode, setEditMode] = useState<'direct' | 'fork'>('direct');
+  const [editMode, setEditMode] = useState<"direct" | "fork">("direct");
 
   const stop = () => {
     if (abortControllerRef.current) {
@@ -474,7 +474,7 @@ export function Chat({
   };
 
   const handleMessageEdit = async (messageId: string, newContent: string) => {
-    if (editMode === 'direct') {
+    if (editMode === "direct") {
       await handleDirectEdit(messageId, newContent);
     } else {
       await handleFork(messageId, newContent);
@@ -483,35 +483,35 @@ export function Chat({
 
   const handleFork = async (messageId: string, newContent: string) => {
     const newForkId = uuidv4();
-    const originalMessage = messages.find(m => m.id === messageId);
+    const originalMessage = messages.find((m) => m.id === messageId);
 
     try {
       await fetch(`${window.location.origin}/api/chat/${id}/fork`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: newForkId,
           chatId: id,
           parentMessageId: messageId,
-          messages: messages.map(m => ({
+          messages: messages.map((m) => ({
             ...m,
             toolInvocations: m.toolInvocations || [],
           })),
-          baseMessages: initialMessages.map(m => ({
+          baseMessages: initialMessages.map((m) => ({
             ...m,
             toolInvocations: m.toolInvocations || [],
           })),
           editPoint: {
             messageId,
-            originalContent: originalMessage?.content || '',
+            originalContent: originalMessage?.content || "",
             newContent,
-            timestamp: new Date().toISOString()
-          }
+            timestamp: new Date().toISOString(),
+          },
         }),
       });
       router.push(`/chat/${id}/fork/${newForkId}`);
     } catch (error) {
-      console.error('Failed to create fork:', error);
+      console.error("Failed to create fork:", error);
     }
   };
 
@@ -519,160 +519,145 @@ export function Chat({
     if (!forkId) return;
     try {
       await fetch(`/api/chat/${id}/fork/${forkId}/submit`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          status: 'submitted',
-          messages: messages.map(m => ({
+          status: "submitted",
+          messages: messages.map((m) => ({
             ...m,
             toolInvocations: m.toolInvocations || [],
           })),
-          parentMessageId: messages[messages.length - 1]?.id
+          parentMessageId: messages[messages.length - 1]?.id,
         }),
       });
       router.refresh();
     } catch (error) {
-      console.error('Failed to submit fork:', error);
+      console.error("Failed to submit fork:", error);
     }
   };
 
-  // Set initial editing state
   useEffect(() => {
-    if (initialEditingMessageId && isFork && status === 'draft') {
+    if (initialEditingMessageId && isFork && status === "draft") {
       setEditingMessageId(initialEditingMessageId);
       setIsEditing(true);
     }
   }, [initialEditingMessageId, isFork, setEditingMessageId, setIsEditing, status]);
 
   return (
-    <div className="flex h-full">
-      {/* Fork Chain Sidebar */}
-      <div className="w-64 border-r">
-        <ForkChain
-          forkChain={forkChain || []}
-          currentForkId={forkId || ''}
-          chatId={id}
-          onForkSelect={handleForkSelect}
-        />
+    <div className="flex flex-col h-screen bg-white text-black dark:bg-zinc-900 dark:text-zinc-100">
+      <div className="p-4 border-b">
+        <h2 className="text-lg font-medium">{title || "Chat"}</h2>
+        {editPoint && (
+          <DiffViewer
+            diff={editPoint}
+            isExpanded={isDiffExpanded(editPoint.id)}
+          />
+        )}
       </div>
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Chat Header */}
-        <div className="border-b p-4">
-          <h2 className="text-lg font-medium">{title || 'Chat'}</h2>
-          {editPoint && (
-            <DiffViewer
-              diff={editPoint}
-              isExpanded={isDiffExpanded(editPoint.id)}
-            />
-          )}
-        </div>
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto" ref={messagesContainerRef}>
-          {messages.length > 0 ? (
-            messages.map((message, index) => (
+      <div className="flex-1 overflow-y-auto" ref={messagesContainerRef}>
+        {messages.length > 0 ? (
+          messages.map((message, index) => (
+            <div
+              key={message.id}
+              className={cn(
+                "group relative mb-4 flex items-start px-4",
+                message.role === "user" ? "justify-end" : "justify-start"
+              )}
+            >
               <div
-                key={message.id}
                 className={cn(
-                  "group relative mb-4 flex items-start md:px-4",
-                  message.role === "user" ? "justify-end" : "justify-start"
+                  "flex w-full max-w-2xl flex-col gap-2 rounded-lg px-4 py-2",
+                  message.role === "user"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground"
                 )}
               >
-                <div
-                  className={cn(
-                    "flex w-full max-w-2xl flex-col gap-2 rounded-lg px-4 py-2",
-                    message.role === "user"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground"
-                  )}
-                >
-                  <div className="flex justify-between items-center">
-                    <div className="text-sm font-semibold">
-                      {message.role === "user" ? "You" : "Assistant"}
-                    </div>
-                    {message.role === "user" && (
-                      <div className="flex items-center gap-2">
-                        {editingMessageId === message.id ? (
-                          <div className="flex items-center gap-4 mr-2">
-                            <label className="flex items-center gap-2">
-                              <input
-                                type="radio"
-                                name="editMode"
-                                value="direct"
-                                checked={editMode === 'direct'}
-                                onChange={(e) => setEditMode(e.target.value as 'direct' | 'fork')}
-                                className="radio"
-                              />
-                              <span className="text-xs">Direct Edit</span>
-                            </label>
-                            <label className="flex items-center gap-2">
-                              <input
-                                type="radio"
-                                name="editMode"
-                                value="fork"
-                                checked={editMode === 'fork'}
-                                onChange={(e) => setEditMode(e.target.value as 'direct' | 'fork')}
-                                className="radio"
-                              />
-                              <span className="text-xs">Fork on Edit</span>
-                            </label>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setEditingMessageId(message.id)}
-                            className="text-xs px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 transition-colors"
-                          >
-                            {editMode === 'fork' ? 'Fork' : 'Edit'}
-                          </button>
-                        )}
-                      </div>
-                    )}
+                <div className="flex justify-between items-center">
+                  <div className="text-sm font-semibold">
+                    {message.role === "user" ? "You" : "Assistant"}
                   </div>
-                  <MessageContent
-                    message={message}
-                    isEditing={editingMessageId === message.id}
-                    onEditStart={() => setEditingMessageId(message.id)}
-                    onEditComplete={(content) => handleMessageEdit(message.id, content)}
-                    isDraft={isFork && status === 'draft'}
-                    isForkMessage={isFork && message.id === editPoint?.id}
-                    onSubmitFork={message.id === editPoint?.id ? handleSubmitFork : undefined}
-                    editMode={editMode}
-                  />
+                  {message.role === "user" && (
+                    <div className="flex items-center gap-2">
+                      {editingMessageId === message.id ? (
+                        <div className="flex items-center gap-4 mr-2">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="editMode"
+                              value="direct"
+                              checked={editMode === "direct"}
+                              onChange={(e) =>
+                                setEditMode(e.target.value as "direct" | "fork")
+                              }
+                            />
+                            <span className="text-xs">Direct Edit</span>
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="editMode"
+                              value="fork"
+                              checked={editMode === "fork"}
+                              onChange={(e) =>
+                                setEditMode(e.target.value as "direct" | "fork")
+                              }
+                            />
+                            <span className="text-xs">Fork on Edit</span>
+                          </label>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setEditingMessageId(message.id)}
+                          className="text-xs px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 transition-colors"
+                        >
+                          {editMode === "fork" ? "Fork" : "Edit"}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
+                <MessageContent
+                  message={message}
+                  isEditing={editingMessageId === message.id}
+                  onEditStart={() => setEditingMessageId(message.id)}
+                  onEditComplete={(content) => handleMessageEdit(message.id, content)}
+                  isDraft={isFork && status === "draft"}
+                  isForkMessage={isFork && message.id === editPoint?.id}
+                  onSubmitFork={
+                    message.id === editPoint?.id ? handleSubmitFork : undefined
+                  }
+                  editMode={editMode}
+                />
               </div>
-            ))
-          ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <p className="text-muted-foreground">
-                No messages yet. Start a conversation!
-              </p>
             </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Input Area */}
-        <div className="border-t p-4">
-          <div className="mx-auto sm:max-w-2xl sm:px-4">
-            <div className="flex h-full items-center justify-center">
-              <MultimodalInput
-                input={input}
-                setInput={setInput}
-                isLoading={isLoading}
-                stop={stop}
-                attachments={attachments}
-                setAttachments={setAttachments}
-                messages={messages}
-                append={async (message: ExtendedMessage | CreateMessage) => {
-                  await append(message as ExtendedMessage);
-                  return null;
-                }}
-                handleSubmit={handleSubmit}
-              />
-            </div>
+          ))
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <p className="text-muted-foreground">
+              No messages yet. Start a conversation!
+            </p>
           </div>
+        )}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="border-t p-4">
+        <div className="mx-auto w-full max-w-2xl">
+          <MultimodalInput
+            input={input}
+            setInput={setInput}
+            isLoading={isLoading}
+            stop={stop}
+            attachments={attachments}
+            setAttachments={setAttachments}
+            messages={messages}
+            append={async (message: ExtendedMessage | CreateMessage) => {
+              await append(message as ExtendedMessage);
+              return null;
+            }}
+            handleSubmit={handleSubmit}
+          />
         </div>
       </div>
     </div>

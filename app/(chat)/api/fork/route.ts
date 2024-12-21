@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/app/(auth)/auth";
-import { upsertFork, getForkById } from "@/db/queries";
+import { upsertFork, getForkById, getChatForks, deleteForkById } from "@/db/queries";
 import { MessageDiff } from "@/types/fork";
 
 export async function POST(req: Request) {
@@ -90,5 +90,46 @@ export async function PATCH(req: Request) {
 			stack: error instanceof Error ? error.stack : undefined
 		});
 		return new Response("Failed to update fork", { status: 500 });
+	}
+}
+
+export async function GET(req: Request) {
+	const session = await auth();
+	if (!session) {
+		return new Response("Unauthorized", { status: 401 });
+	}
+
+	const { searchParams } = new URL(req.url);
+	const chatId = searchParams.get("chatId");
+	if (!chatId) {
+		return new Response("Missing chatId", { status: 400 });
+	}
+
+	try {
+		const forks = await getChatForks({ chatId });
+		return NextResponse.json({ forks });
+	} catch (error) {
+		console.error("Error listing forks:", error);
+		return new Response("Failed to list forks", { status: 500 });
+	}
+}
+
+export async function DELETE(req: Request) {
+	const session = await auth();
+	if (!session) {
+		return new Response("Unauthorized", { status: 401 });
+	}
+
+	try {
+		const { id } = await req.json();
+		if (!id) {
+			return new Response("Missing fork ID", { status: 400 });
+		}
+		console.log('Deleting fork:', { id });
+		await deleteForkById(id);
+		return NextResponse.json({ status: "ok", message: `Fork ${id} deleted.` });
+	} catch (error) {
+		console.error("Error deleting fork:", error);
+		return new Response("Failed to delete fork", { status: 500 });
 	}
 }
