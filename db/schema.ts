@@ -1,5 +1,9 @@
+import { Message } from "ai";
 import { InferSelectModel, sql } from "drizzle-orm";
-import { pgTable, varchar, timestamp, json, uuid, integer } from "drizzle-orm/pg-core";
+import { pgTable, varchar, timestamp, json, uuid, integer, jsonb, text } from "drizzle-orm/pg-core";
+
+import { MessageDiff, ForkAncestry } from "@/types/fork";
+import { ExtendedMessage } from "@/types/tools";
 
 export const user = pgTable("User", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
@@ -19,15 +23,17 @@ export const chat = pgTable("Chat", {
 });
 
 export const fork = pgTable("Fork", {
-  id: uuid("id").primaryKey().notNull().defaultRandom(),
-  chatId: uuid("chatId").notNull().references(() => chat.id, { onDelete: 'cascade' }),
-  parentChatId: uuid("parentChatId").references(() => chat.id, { onDelete: 'set null' }),
-  parentMessageId: uuid("parentMessageId").notNull(),
-  messages: json("messages").notNull(),
-  title: varchar("title", { length: 255 }),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  editPoint: json("editPoint").notNull(),
-  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  id: text("id").primaryKey(),
+  chatId: text("chatId").notNull(),
+  parentChatId: text("parentChatId"),
+  parentMessageId: text("parentMessageId").notNull(),
+  messageDiffs: jsonb("messageDiffs").$type<MessageDiff[]>().notNull().default([]),
+  appendedMessages: jsonb("appendedMessages").$type<ExtendedMessage[]>().notNull().default([]),
+  ancestry: jsonb("ancestry").$type<ForkAncestry[]>().notNull().default([]),
+  title: text("title"),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  editPoint: jsonb("editPoint").$type<MessageDiff>(),
+  status: text("status", { enum: ["draft", "submitted"] }).notNull().default("draft"),
 });
 
 export type Chat = InferSelectModel<typeof chat>;

@@ -1,20 +1,34 @@
-import { Message } from "ai";
+import { CustomToolInvocation, ExtendedMessage } from "@/types/tools";
+
+export interface MessageDiff {
+	id: string;
+	role: 'user' | 'assistant' | 'system';
+	content: string;
+	newContent: string;
+	timestamp: string;
+	toolInvocations?: CustomToolInvocation[];
+}
+
+export interface ForkAncestry {
+	forkId: string;
+	messageDiffs: MessageDiff[];
+	appendedMessages: ExtendedMessage[];
+}
 
 export interface Fork {
 	id: string;
 	chatId: string;
 	parentChatId?: string;
 	parentMessageId: string;
-	messages: Message[];
+	messageDiffs: MessageDiff[];
+	appendedMessages: ExtendedMessage[];
+	ancestry: ForkAncestry[];
 	title?: string;
 	createdAt: Date;
-	editPoint: {
-		messageId: string;
-		originalContent: string;
-		newContent: string;
-		timestamp: string;
-	};
+	editPoint: MessageDiff | null;
 	status: 'draft' | 'submitted';
+	messages: ExtendedMessage[];
+	baseMessages: ExtendedMessage[];
 }
 
 export type CreateForkParams = Omit<Fork, 'id' | 'createdAt'>; 

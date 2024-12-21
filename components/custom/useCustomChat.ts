@@ -2,17 +2,9 @@ import { Message, ToolInvocation, ChatRequestOptions } from 'ai';
 import React, { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
-type CustomToolInvocation = {
-    toolCallId: string;
-    toolName: string;
-    args: string;
-    state: 'call' | 'result' | 'partial-call';
-    result?: string;
-};
+import { ExtendedMessage, CustomToolInvocation } from '@/types/tools';
 
-export type ExtendedMessage = Message & {
-    toolInvocations?: CustomToolInvocation[];
-};
+
 
 const cleanStreamText = (text: string | undefined) => {
     // Return empty string if text is undefined or null
@@ -80,7 +72,7 @@ const processStreamLine = (
 
                 const toolInvocations = lastMessage.toolInvocations || [];
                 const toolInvocationIndex = toolInvocations.findIndex(
-                    (invocation) => invocation.toolCallId === deltaEvent.toolCallId
+                    (invocation: CustomToolInvocation) => invocation.toolCallId === deltaEvent.toolCallId
                 );
 
                 if (toolInvocationIndex >= 0) {
@@ -203,13 +195,13 @@ const processStreamLine = (
 };
 
 interface UseCustomChatProps {
-    initialMessages: Array<Message>;
+    initialMessages: Array<ExtendedMessage>;
     id: string;
     title?: string;
     parentChatId?: string;
     forkedFromMessageId?: string;
     forkId?: string;
-    editPoint?: { messageId: string; originalContent: string; newContent: string; timestamp: string };
+    editPoint?: { id: string; content: string; newContent: string; timestamp: string };
     isFork?: boolean;
     status?: 'draft' | 'submitted';
     initialEditingMessageId?: string;
@@ -278,7 +270,7 @@ export function useCustomChat({
 
         try {
             // First save the fork with updated messages
-            await fetch('/api/fork', {
+            await fetch(`${window.location.origin}/api/fork`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -309,6 +301,7 @@ export function useCustomChat({
     const handleSubmit = async (
         e?: { preventDefault?: () => void },
         chatRequestOptions?: ChatRequestOptions & {
+            chatId?: string;
             forkChat?: boolean;
             newTitle?: string;
             submitDraft?: boolean;
@@ -319,12 +312,12 @@ export function useCustomChat({
                 newContent: string;
                 timestamp: string;
             };
-            messages?: Message[];
+            messages?: ExtendedMessage[];
+            allowEmptySubmit?: boolean;
         }
     ) => {
         e?.preventDefault?.();
 
-        // Use provided messages or current input for submission
         const submissionMessages = chatRequestOptions?.messages || messages;
         const shouldSubmitEmpty = chatRequestOptions?.allowEmptySubmit;
 
@@ -332,12 +325,12 @@ export function useCustomChat({
 
         setIsLoading(true);
         try {
-            // Only add new user message if we have input
             const updatedMessages = input.trim()
                 ? [...submissionMessages, {
                     id: uuidv4(),
                     role: 'user',
                     content: input,
+                    toolInvocations: [], // Initialize empty tool invocations
                 } as ExtendedMessage]
                 : submissionMessages;
 
@@ -345,16 +338,22 @@ export function useCustomChat({
                 id: uuidv4(),
                 role: 'assistant',
                 content: '',
-                tool_calls: [],
+                toolInvocations: [], // Initialize empty tool invocations
+                tool_calls: [], // Keep for compatibility with AI package
             };
 
             const payload = {
                 ...chatRequestOptions,
-                messages: updatedMessages,
-                editedMessageId: forkedFromMessageId || editPoint?.messageId,
+                messages: updatedMessages.map(m => ({
+                    ...m,
+                    toolInvocations: m.toolInvocations || [],
+                })),
+                chatId: chatRequestOptions?.chatId || id,
+                editedMessageId: forkedFromMessageId || editPoint?.id,
                 editPoint: editPoint || {
-                    messageId: updatedMessages[updatedMessages.length - 1]?.id,
-                    originalContent: updatedMessages[updatedMessages.length - 1]?.content,
+                    id: updatedMessages[updatedMessages.length - 1]?.id,
+                    role: "user",
+                    content: updatedMessages[updatedMessages.length - 1]?.content,
                     newContent: updatedMessages[updatedMessages.length - 1]?.content,
                     timestamp: new Date().toISOString()
                 }
@@ -362,7 +361,6 @@ export function useCustomChat({
 
             setMessages(prev => [...updatedMessages, aiMessage]);
 
-            // Determine the correct endpoint based on whether we're in a fork
             const endpoint = isFork && forkId
                 ? `/api/chat/${id}/fork/${forkId}`
                 : '/api/chat';
@@ -372,25 +370,21 @@ export function useCustomChat({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
                 signal: (abortControllerRef.current = new AbortController()).signal,
-            }).then(res => {
-                if (!res.ok) throw new Error(res.statusText);
-                return res;
             });
 
             if (!response.ok) throw new Error('Failed to send message');
 
-            // Update both chat and fork after processing the response
             if (isFork && forkId) {
-                // Get the final messages after processing the response
                 const finalMessages = messages.concat(aiMessage);
-
-                // Update the fork with the latest messages
                 await fetch('/api/fork', {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         id: forkId,
-                        messages: finalMessages,
+                        messages: finalMessages.map(m => ({
+                            ...m,
+                            toolInvocations: m.toolInvocations || [],
+                        })),
                         status: 'submitted'
                     }),
                 });
@@ -448,16 +442,19 @@ export function useCustomChat({
     };
 
     const handleDirectEdit = async (messageId: string, newContent: string) => {
-        // Update local message state
+        const originalMessage = messages.find(m => m.id === messageId);
         const updatedMessages = messages.map(msg =>
             msg.id === messageId
-                ? { ...msg, content: newContent }
+                ? {
+                    ...msg,
+                    content: newContent,
+                    toolInvocations: msg.toolInvocations || []
+                }
                 : msg
         );
         setMessages(updatedMessages);
 
         try {
-            // First save the edit
             await fetch('/api/chat/edit', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
@@ -465,36 +462,36 @@ export function useCustomChat({
                     chatId: id,
                     messageId,
                     newContent,
-                    isFork: isFork,
-                    forkId: forkId
+                    isFork,
+                    forkId,
+                    toolInvocations: originalMessage?.toolInvocations || []
                 })
             });
 
-            // Then trigger a new completion with the updated messages
             if (isFork) {
                 await handleSubmit(undefined, {
                     submitDraft: true,
                     allowEmptySubmit: true,
                     messages: updatedMessages,
+                    chatId: id,
                     forkChat: false,
                     editedMessageId: messageId,
                     editPoint: {
                         messageId,
-                        originalContent: messages.find(m => m.id === messageId)?.content || '',
+                        originalContent: originalMessage?.content || '',
                         newContent,
                         timestamp: new Date().toISOString()
                     }
                 });
             } else {
-                // For non-fork direct edits, trigger normal completion
                 await handleSubmit(undefined, {
                     allowEmptySubmit: true,
                     messages: updatedMessages,
+                    chatId: id
                 });
             }
         } catch (error) {
             console.error('Failed to save edit:', error);
-            // Optionally revert the local message state on error
             setMessages(messages);
         }
     };

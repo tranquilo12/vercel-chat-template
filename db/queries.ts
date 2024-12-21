@@ -1,15 +1,16 @@
 "server-only";
 
-import { CoreMessage } from "ai";
+import { CoreMessage, Message } from "ai";
 import { genSaltSync, hashSync } from "bcrypt-ts";
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
-import { ExtendedMessage } from "@/components/custom/useCustomChat";
-import { CreateForkParams } from "@/types/fork";
+import { createForkAncestry } from "@/lib/forkUtils";
+import { Fork, MessageDiff } from "@/types/fork";
+import { CustomToolInvocation, ExtendedMessage } from "@/types/tools";
 
-import { chat, user, User, fork, Fork } from "./schema";
+import { chat, user, User, fork } from "./schema";
 
 
 // Optionally, if not using email/pass login, you can
@@ -57,7 +58,12 @@ export async function saveChat({
     userId: string;
 }) {
     if (!id || !messages || !userId) {
-        throw new Error('Missing required fields for saving chat');
+        console.error('Missing required fields for saving chat', {
+            id,
+            messages,
+            userId
+        });
+        return;
     }
 
     const normalizedMessages = messages.map(msg => ({
@@ -150,11 +156,44 @@ export async function getChatForks({ chatId }: { chatId: string }) {
 }
 
 export async function getForkById({ id }: { id: string }): Promise<Fork | null> {
+    console.log('getForkById: Attempting to fetch fork with id:', id);
+
     try {
         const [selectedFork] = await db.select().from(fork).where(eq(fork.id, id));
-        return selectedFork;
+        console.log('getForkById: Raw database result:', selectedFork);
+
+        if (!selectedFork) {
+            console.log('getForkById: No fork found with id:', id);
+            return null;
+        }
+
+        // Transform database record to Fork type
+        const transformedFork = {
+            ...selectedFork,
+            messageDiffs: selectedFork.messageDiffs || [],
+            appendedMessages: selectedFork.appendedMessages || [],
+            ancestry: selectedFork.ancestry || [],
+            editPoint: selectedFork.editPoint || null,
+            status: selectedFork.status || 'draft',
+            createdAt: selectedFork.createdAt || new Date(),
+            title: selectedFork.title || undefined
+        } as Fork;
+
+        console.log('getForkById: Transformed fork:', {
+            id: transformedFork.id,
+            chatId: transformedFork.chatId,
+            parentMessageId: transformedFork.parentMessageId,
+            messageDiffsCount: transformedFork.messageDiffs.length,
+            appendedMessagesCount: transformedFork.appendedMessages.length,
+            status: transformedFork.status
+        });
+
+        return transformedFork;
     } catch (error) {
-        console.error("Failed to get fork by id from database");
+        console.error("getForkById: Failed to get fork from database:", {
+            error,
+            stackTrace: error instanceof Error ? error.stack : undefined
+        });
         throw error;
     }
 }
@@ -168,119 +207,115 @@ export async function deleteForkById({ id }: { id: string }) {
     }
 }
 
-export async function saveFork({
+export async function upsertFork({
     id,
-    messages,
-    parentForkId,
-    chatId,
-    editedMessageId,
-    editPoint,
-    title,
-}: {
-    id: string;
-    messages: ExtendedMessage[];
-    parentForkId?: string;
-    chatId: string;
-    editedMessageId: string;
-    editPoint: {
-        messageId: string;
-        originalContent: string;
-        newContent: string;
-        timestamp: string;
-    };
-    title?: string;
-}) {
-    if (!id || !messages || !chatId || !editedMessageId || !editPoint) {
-        throw new Error('Missing required fields for saving fork');
-    }
-
-    // Ensure editPoint has all required fields
-    if (!editPoint.messageId || !editPoint.originalContent || !editPoint.newContent || !editPoint.timestamp) {
-        throw new Error('EditPoint missing required fields');
-    }
-
-    const normalizedMessages = messages.map(msg => ({
-        ...msg,
-        content: msg.content,
-        toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : [],
-        role: msg.role
-    }));
-
-    try {
-        const selectedForks = await db.select().from(fork).where(eq(fork.id, id));
-
-        if (selectedForks.length > 0) {
-            // For existing forks, maintain the original editPoint
-            return await db
-                .update(fork)
-                .set({
-                    messages: JSON.stringify(normalizedMessages),
-                    title: title || selectedForks[0].title,
-                    status: 'submitted'
-                })
-                .where(eq(fork.id, id));
-        }
-
-        // For new forks
-        return await db.insert(fork).values({
-            id,
-            chatId,
-            parentMessageId: editedMessageId,
-            messages: JSON.stringify(normalizedMessages),
-            editPoint: editPoint, // Don't stringify - let Drizzle handle the JSONB conversion
-            title: title || `Fork at message ${editedMessageId}`,
-            createdAt: new Date(),
-            status: 'draft'
-        });
-    } catch (error) {
-        console.error("Failed to save fork in database:", error);
-        throw error;
-    }
-}
-
-export async function createFork({
     chatId,
     parentChatId,
     parentMessageId,
     messages,
+    baseMessages,
     title,
     editPoint,
-}: CreateForkParams) {
+    status,
+    parentFork,
+}: {
+    id: string;
+    chatId: string;
+    parentChatId?: string;
+    parentMessageId: string;
+    messages: ExtendedMessage[];
+    baseMessages: ExtendedMessage[];
+    title?: string;
+    editPoint?: MessageDiff;
+    status?: 'draft' | 'submitted';
+    parentFork?: Fork | null;
+}) {
     try {
-        const [newFork] = await db.insert(fork).values({
+        const safeMessages = Array.isArray(messages) ? messages : [];
+        const safeBaseMessages = Array.isArray(baseMessages) ? baseMessages : [];
+
+        const messageDiffs: MessageDiff[] = [];
+        const appendedMessages: ExtendedMessage[] = [];
+
+        safeMessages.forEach((msg) => {
+            if (!msg) return;
+
+            const baseMsg = safeBaseMessages.find(m => m?.id === msg.id);
+            if (baseMsg) {
+                const contentChanged = baseMsg.content !== msg.content;
+                const toolsChanged = JSON.stringify(baseMsg.toolInvocations || []) !==
+                    JSON.stringify(msg.toolInvocations || []);
+
+                if (contentChanged || toolsChanged) {
+                    messageDiffs.push({
+                        id: msg.id,
+                        role: msg.role as 'user' | 'assistant' | 'system',
+                        content: baseMsg.content,
+                        newContent: msg.content,
+                        timestamp: new Date().toISOString(),
+                        toolInvocations: msg.toolInvocations || []
+                    });
+                }
+            } else {
+                // Ensure tool invocations are included in appended messages
+                appendedMessages.push({
+                    ...msg,
+                    toolInvocations: msg.toolInvocations || []
+                });
+            }
+        });
+
+        const ancestry = parentFork
+            ? createForkAncestry(parentFork, messageDiffs, appendedMessages)
+            : [];
+
+        const dbForkData = {
+            id,
             chatId,
             parentChatId,
             parentMessageId,
-            messages: JSON.stringify(messages),
-            title: title || `Fork from ${parentMessageId}`,
-            editPoint,
-            status: 'draft'
-        }).returning();
+            messages: JSON.stringify(safeMessages),
+            baseMessages: JSON.stringify(safeBaseMessages),
+            messageDiffs: messageDiffs,
+            appendedMessages: appendedMessages,
+            ancestry: ancestry,
+            title,
+            editPoint: editPoint ? editPoint : null,
+            status: status || 'draft',
+            createdAt: new Date()
+        };
 
-        return newFork;
-    } catch (error) {
-        console.error("Failed to create fork:", error);
-        throw error;
-    }
-}
-
-export async function updateForkStatus({
-    id,
-    status,
-}: {
-    id: string;
-    status: 'draft' | 'submitted';
-}) {
-    try {
-        const [updatedFork] = await db
-            .update(fork)
-            .set({ status })
+        // Rest of the function remains the same
+        const existingFork = await db
+            .select()
+            .from(fork)
             .where(eq(fork.id, id))
-            .returning();
+            .execute();
 
-        return updatedFork;
+        if (existingFork.length > 0) {
+            await db
+                .update(fork)
+                .set(dbForkData)
+                .where(eq(fork.id, id))
+                .execute();
+        } else {
+            await db
+                .insert(fork)
+                .values(dbForkData)
+                .execute();
+        }
+
+        return {
+            ...dbForkData,
+            messages: safeMessages,
+            baseMessages: safeBaseMessages,
+            messageDiffs,
+            appendedMessages,
+            ancestry,
+            editPoint: editPoint || null
+        };
     } catch (error) {
-        console.error("Failed to update fork status:", error);
+        console.error('Error in upsertFork:', error);
         throw error;
     }
 }

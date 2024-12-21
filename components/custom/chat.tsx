@@ -1,11 +1,10 @@
 "use client";
 
-import { Attachment, Message, CreateMessage } from "ai";
+import { Attachment, CreateMessage } from "ai";
 import {
   Check,
   Copy,
   Code,
-  Database,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
@@ -13,14 +12,19 @@ import { useRouter } from "next/navigation";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 
+import { DiffViewer } from "@/components/custom/DiffViewer";
+import { ForkChain } from "@/components/custom/ForkChain";
 import { Markdown } from "@/components/custom/markdown";
 import { useScrollToBottom } from "@/components/custom/use-scroll-to-bottom";
 import { highlightCode } from "@/lib/syntax-highlighting";
 import { cn } from "@/lib/utils";
+import { Fork, MessageDiff } from "@/types/fork";
+import { CustomToolInvocation, ExtendedMessage } from "@/types/tools";
 
 import { JsonFormatter } from "./JsonFormatter";
 import { MultimodalInput } from "./multimodal-input";
-import { useCustomChat, ExtendedMessage } from "./useCustomChat";
+import { useCustomChat } from "./useCustomChat";
+import { useForkState } from "./useForkState";
 
 // Instead of redeclaring the Markdown module, create a new interface
 interface CustomMarkdownProps {
@@ -34,6 +38,17 @@ interface CustomMarkdownProps {
 // Type assertion for Markdown component
 const MarkdownComponent = Markdown as React.FC<CustomMarkdownProps>;
 
+interface MessageContentProps {
+  message: ExtendedMessage;
+  isEditing?: boolean;
+  onEditComplete?: (content: string) => void;
+  onEditStart?: () => void;
+  isDraft?: boolean;
+  isForkMessage?: boolean;
+  onSubmitFork?: () => void;
+  editMode: 'direct' | 'fork';
+}
+
 function MessageContent({
   message,
   isEditing,
@@ -43,17 +58,7 @@ function MessageContent({
   isForkMessage,
   onSubmitFork,
   editMode,
-}: {
-  message: ExtendedMessage;
-  isEditing?: boolean;
-  onEditComplete?: (content: string) => void;
-  onEditStart?: () => void;
-  isDraft?: boolean;
-  isForkMessage?: boolean;
-  onSubmitFork?: () => void;
-  editMode: 'direct' | 'fork';
-}) {
-  // Move all hooks to the top of the component
+}: MessageContentProps) {
   const [editedContent, setEditedContent] = useState(message.content);
   const codeRef = useRef<HTMLDivElement>(null);
 
@@ -79,26 +84,49 @@ function MessageContent({
       };
     }
 
-    const text = parsedContent
-      .filter((part: any) => part.type === "text")
-      .map((part: any) => part.text)
-      .join("");
+    try {
+      const parsed = Array.isArray(parsedContent) ? parsedContent : JSON.parse(message.content);
+      if (Array.isArray(parsed)) {
+        const text = parsed
+          .filter((part: any) => part.type === "text")
+          .map((part: any) => part.text)
+          .join("");
 
-    const calls = parsedContent
-      .filter((part: any) => part.type === "tool-call")
-      .map((part: any) => ({
-        state: "call",
-        toolCallId: part.toolCallId,
-        toolName: part.toolName,
-        args: part.args,
-      }));
+        const calls = parsed
+          .filter((part: any) => part.type === "tool-call")
+          .map((part: any) => ({
+            state: part.state || "call",
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            args: part.args,
+            argsTextDelta: part.argsTextDelta,
+            result: part.result
+          }));
+
+        // Merge existing tool invocations with new ones
+        const mergedCalls = [...calls as CustomToolInvocation[]];
+        message.toolInvocations?.forEach(existing => {
+          if (!mergedCalls.find(call => call.toolCallId === existing.toolCallId)) {
+            mergedCalls.push(existing);
+          }
+        });
+
+        return {
+          textContent: text,
+          toolInvocations: mergedCalls,
+        };
+      }
+    } catch (e) {
+      console.error("Error parsing message content:", e);
+    }
 
     return {
-      textContent: text,
-      toolInvocations: [...calls, ...(message.toolInvocations || [])],
+      textContent: message.content,
+      toolInvocations: message.toolInvocations || [],
     };
-  }, [parsedContent, message.content, message.toolInvocations]);
+  }, [message.content, message.toolInvocations, parsedContent]);
 
+  // Handle code highlighting
   useEffect(() => {
     if (codeRef.current) {
       const codeBlocks = codeRef.current.querySelectorAll('pre code');
@@ -109,21 +137,17 @@ function MessageContent({
         }
       });
     }
-  }, [message.content]);
+  }, [textContent]);
 
+  // Handle keyboard events for editing
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (editMode === 'direct') {
-        onEditComplete?.(editedContent);
-        // Direct edits will be handled by handleDirectEdit
-      } else {
-        onEditComplete?.(editedContent);
-        // Fork edits will be handled by handleDraftEdit
-      }
+      onEditComplete?.(editedContent);
     }
   };
 
+  // Render editing interface
   if (isEditing) {
     return (
       <div className="space-y-2">
@@ -159,11 +183,10 @@ function MessageContent({
     );
   }
 
-  // Handle tool role messages
+  // Render tool messages
   if (message.role === "tool") {
     try {
       const toolContent = JSON.parse(message.content);
-
       return (
         <div className="space-y-4">
           {Array.isArray(toolContent) ? (
@@ -190,16 +213,13 @@ function MessageContent({
                 <div className="p-4">
                   {tool.result.success === false ? (
                     <div className="text-sm text-destructive">
-                      {tool.error?.message ||
-                        "An error occurred during execution"}
+                      {tool.error?.message || "An error occurred during execution"}
                     </div>
                   ) : (
                     <div className="prose dark:prose-invert">
                       <MarkdownComponent>
                         {typeof tool.result === "object"
-                          ? "```json\n" +
-                          JSON.stringify(tool.result, null, 2) +
-                          "\n```"
+                          ? "```json\n" + JSON.stringify(tool.result, null, 2) + "\n```"
                           : String(tool.result)}
                       </MarkdownComponent>
                     </div>
@@ -224,6 +244,7 @@ function MessageContent({
     }
   }
 
+  // Render regular message content with tool invocations
   return (
     <div className="space-y-4" ref={codeRef}>
       {/* Text Content */}
@@ -233,6 +254,7 @@ function MessageContent({
         </div>
       )}
 
+      {/* Edit Button for Fork Messages */}
       {isForkMessage && !isEditing && (
         <button
           onClick={onEditStart}
@@ -243,11 +265,13 @@ function MessageContent({
       )}
 
       {/* Tool Calls and Results */}
-      {message.role === "assistant" &&
-        toolInvocations &&
-        toolInvocations.map((tool: any) => (
-          <ToolDisplay key={tool.toolCallId} tool={tool} />
-        ))}
+      {message.role === "assistant" && toolInvocations && toolInvocations.length > 0 && (
+        <div className="space-y-2">
+          {toolInvocations.map((tool) => (
+            <ToolDisplay key={tool.toolCallId} tool={tool} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -281,7 +305,6 @@ const CopyButton = ({ text }: { text: string }) => {
 const ToolDisplay = ({ tool }: { tool: any }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Safely parse arguments
   const parsedArgs = useMemo(() => {
     try {
       return typeof tool.args === "string"
@@ -292,12 +315,9 @@ const ToolDisplay = ({ tool }: { tool: any }) => {
     }
   }, [tool.args]);
 
-  // Check if this is a code block
-  const isCodeBlock = useMemo(() => {
-    return parsedArgs?.code &&
-      (tool.toolName === "executePythonCode" ||
-        parsedArgs.language);
-  }, [parsedArgs, tool.toolName]);
+  const isStreaming = tool.state === "partial-call" || tool.state === "streaming";
+  const isCodeBlock = parsedArgs?.code &&
+    (tool.toolName === "executePythonCode" || parsedArgs.language);
 
   return (
     <div className="border rounded-lg mt-2">
@@ -306,10 +326,19 @@ const ToolDisplay = ({ tool }: { tool: any }) => {
         className="w-full flex items-center justify-between p-2 hover:bg-muted/50"
       >
         <div className="flex items-center gap-2">
-          {tool.state === "call" && <Code className="size-4" />}
+          {isStreaming ? (
+            <div className="animate-spin">⟳</div>
+          ) : (
+            <Code className="size-4" />
+          )}
           <span className="text-sm font-medium">
             {tool.toolName || "Unknown Tool"}
           </span>
+          {isStreaming && (
+            <span className="text-xs text-muted-foreground">
+              (Streaming...)
+            </span>
+          )}
         </div>
         {isExpanded ? (
           <ChevronDown className="size-4" />
@@ -337,7 +366,7 @@ const ToolDisplay = ({ tool }: { tool: any }) => {
                       ? tool.args
                       : JSON.stringify(tool.args || {})
                   }
-                  isStreaming={tool.state === "partial-call"}
+                  isStreaming={isStreaming}
                 />
               )}
             </div>
@@ -356,8 +385,9 @@ interface ChatProps {
   title?: string;
   isFork?: boolean;
   forkId?: string;
-  editPoint?: { messageId: string; originalContent: string; newContent: string; timestamp: string };
+  editPoint?: MessageDiff;
   status?: 'draft' | 'submitted';
+  forkChain?: Fork[];
   initialEditingMessageId?: string;
 }
 
@@ -372,9 +402,9 @@ export function Chat({
   editPoint,
   status,
   initialEditingMessageId,
+  forkChain,
 }: ChatProps) {
   const router = useRouter();
-
   const chatId = id || uuidv4();
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -405,78 +435,35 @@ export function Chat({
     initialEditingMessageId,
   });
 
+  const {
+    activeFork,
+    isSubmitting,
+    setIsSubmitting,
+    toggleDiffExpansion,
+    handleForkSelect,
+    isDiffExpanded
+  } = useForkState({
+    initialFork: forkId ? {
+      id: forkId,
+      chatId: id,
+      parentMessageId: forkedFromMessageId || '',
+      messageDiffs: [],
+      messages: initialMessages as ExtendedMessage[],
+      baseMessages: initialMessages as ExtendedMessage[],
+      appendedMessages: [],
+      ancestry: [],
+      editPoint: editPoint as MessageDiff,
+      status: status || 'draft',
+      createdAt: new Date()
+    } : undefined,
+    forkChain
+  });
+
+
   const [messagesContainerRef, messagesEndRef] =
     useScrollToBottom<HTMLDivElement>();
   const [attachments, setAttachments] = useState<Array<Attachment>>([]);
-
   const [editMode, setEditMode] = useState<'direct' | 'fork'>('direct');
-
-  const handleFork = async (messageId: string, newContent?: string) => {
-    const messageIndex = messages.findIndex((m) => m.id === messageId);
-    if (messageIndex === -1) return;
-
-    const messageToFork = messages[messageIndex];
-    const originalContent = messageToFork.content;
-
-    try {
-      // Create fork with the new content if provided
-      const response = await fetch('/api/fork', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chatId: id,
-          parentChatId: id,
-          parentMessageId: messageId,
-          messages: messages.slice(0, messageIndex + 1).map(msg =>
-            msg.id === messageId && newContent
-              ? { ...msg, content: newContent }
-              : msg
-          ),
-          title: `Fork of message ${messageId}`,
-          editPoint: {
-            messageId,
-            originalContent,
-            newContent: newContent || originalContent,
-            timestamp: new Date().toISOString()
-          },
-          status: 'draft'
-        }),
-      });
-
-      if (!response.ok) throw new Error('Failed to create fork');
-
-      const fork = await response.json();
-      router.push(`/chat/${id}/fork/${fork.id}`);
-    } catch (error) {
-      console.error('Failed to create fork:', error);
-    }
-  };
-
-  const handleSubmitFork = async () => {
-    if (!forkId) return;
-
-    try {
-      // First update the fork status
-      await fetch('/api/fork', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: forkId, status: 'submitted' }),
-      });
-
-      // Create an empty submission to trigger the LLM with existing messages
-      await handleSubmit(undefined, {
-        submitDraft: true,
-        allowEmptySubmit: true,
-        // Pass empty input but ensure messages are processed
-        messages: messages,
-        // Ensure we're continuing in the same chat
-        forkChat: false
-      });
-
-    } catch (error) {
-      console.error('Failed to submit fork:', error);
-    }
-  };
 
   const stop = () => {
     if (abortControllerRef.current) {
@@ -489,13 +476,63 @@ export function Chat({
   const handleMessageEdit = async (messageId: string, newContent: string) => {
     if (editMode === 'direct') {
       await handleDirectEdit(messageId, newContent);
-      await handleSubmit(undefined, {
-        allowEmptySubmit: true,
-        messages: messages,
-      });
     } else {
-      // Pass the new content to handleFork
       await handleFork(messageId, newContent);
+    }
+  };
+
+  const handleFork = async (messageId: string, newContent: string) => {
+    const newForkId = uuidv4();
+    const originalMessage = messages.find(m => m.id === messageId);
+
+    try {
+      await fetch(`${window.location.origin}/api/chat/${id}/fork`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: newForkId,
+          chatId: id,
+          parentMessageId: messageId,
+          messages: messages.map(m => ({
+            ...m,
+            toolInvocations: m.toolInvocations || [],
+          })),
+          baseMessages: initialMessages.map(m => ({
+            ...m,
+            toolInvocations: m.toolInvocations || [],
+          })),
+          editPoint: {
+            messageId,
+            originalContent: originalMessage?.content || '',
+            newContent,
+            timestamp: new Date().toISOString()
+          }
+        }),
+      });
+      router.push(`/chat/${id}/fork/${newForkId}`);
+    } catch (error) {
+      console.error('Failed to create fork:', error);
+    }
+  };
+
+  const handleSubmitFork = async () => {
+    if (!forkId) return;
+    try {
+      await fetch(`/api/chat/${id}/fork/${forkId}/submit`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'submitted',
+          messages: messages.map(m => ({
+            ...m,
+            toolInvocations: m.toolInvocations || [],
+          })),
+          parentMessageId: messages[messages.length - 1]?.id
+        }),
+      });
+      router.refresh();
+    } catch (error) {
+      console.error('Failed to submit fork:', error);
     }
   };
 
@@ -508,132 +545,133 @@ export function Chat({
   }, [initialEditingMessageId, isFork, setEditingMessageId, setIsEditing, status]);
 
   return (
-    <div className="flex flex-col h-full">
-      <div
-        className="flex-1 overflow-y-auto pb-[200px] pt-16 md:pt-20"
-        ref={messagesContainerRef}
-      >
-        {messages.length > 0 ? (
-          messages.map((message, index) => (
-            <div
-              key={message.id}
-              className={cn(
-                "group relative mb-4 flex items-start md:px-4",
-                message.role === "user" ? "justify-end" : "justify-start"
-              )}
-            >
-              <div
-                className={cn(
-                  "flex w-full max-w-2xl flex-col gap-2 rounded-lg px-4 py-2",
-                  message.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground"
-                )}
-              >
-                <div className="flex justify-between items-center">
-                  <div className="text-sm font-semibold">
-                    {message.role === "user" ? "You" : "Assistant"}
-                  </div>
-                  {message.role === "user" && (
-                    <div className="flex items-center gap-2">
-                      {editingMessageId === message.id ? (
-                        // Show radio buttons when editing
-                        <div className="flex items-center gap-4 mr-2">
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              name="editMode"
-                              value="direct"
-                              checked={editMode === 'direct'}
-                              onChange={(e) => setEditMode(e.target.value as 'direct' | 'fork')}
-                              className="radio"
-                            />
-                            <span className="text-xs">Direct Edit</span>
-                          </label>
-                          <label className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              name="editMode"
-                              value="fork"
-                              checked={editMode === 'fork'}
-                              onChange={(e) => setEditMode(e.target.value as 'direct' | 'fork')}
-                              className="radio"
-                            />
-                            <span className="text-xs">Fork on Edit</span>
-                          </label>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            if (editMode === 'fork') {
-                              handleFork(message.id);
-                            } else {
-                              setEditingMessageId(message.id);
-                            }
-                          }}
-                          className="text-xs px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 transition-colors"
-                        >
-                          {editMode === 'fork' ? 'Fork' : 'Edit'}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <MessageContent
-                  message={message}
-                  isEditing={editingMessageId === message.id}
-                  onEditStart={() => setEditingMessageId(message.id)}
-                  onEditComplete={(content) => handleMessageEdit(message.id, content)}
-                  isDraft={isFork && status === 'draft'}
-                  isForkMessage={isFork && message.id === editPoint?.messageId}
-                  onSubmitFork={message.id === editPoint?.messageId ? handleSubmitFork : undefined}
-                  editMode={editMode}
-                />
-                {/* Show submit fork banner inline with edited message */}
-                {isFork && status === 'draft' && message.id === editPoint?.messageId && (
-                  <div className="mt-2 bg-yellow-500/10 border border-yellow-500/20 rounded-md px-3 py-2 flex justify-between items-center">
-                    <span className="text-sm text-yellow-600 dark:text-yellow-400">
-                      Editing Fork Draft
-                    </span>
-                    <button
-                      onClick={handleSubmitFork}
-                      className="px-3 py-1 text-sm bg-primary text-primary-foreground rounded-md"
-                    >
-                      Submit Fork
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="text-muted-foreground">
-              No messages yet. Start a conversation!
-            </p>
-          </div>
-        )}
+    <div className="flex h-full">
+      {/* Fork Chain Sidebar */}
+      <div className="w-64 border-r">
+        <ForkChain
+          forkChain={forkChain || []}
+          currentForkId={forkId || ''}
+          chatId={id}
+          onForkSelect={handleForkSelect}
+        />
       </div>
 
-      {/* Input area */}
-      <div className="fixed inset-x-0 bottom-0 bg-gradient-to-b from-muted/30 from-0% to-muted/30 to-50% pb-4 md:pb-[60px]">
-        <div className="mx-auto sm:max-w-2xl sm:px-4">
-          <div className="flex h-full items-center justify-center">
-            {/* Your existing MultimodalInput component */}
-            <MultimodalInput
-              input={input}
-              setInput={setInput}
-              isLoading={isLoading}
-              stop={stop}
-              attachments={attachments}
-              setAttachments={setAttachments}
-              messages={messages}
-              append={async (message: Message | CreateMessage) => {
-                await append(message as ExtendedMessage);
-                return null;
-              }}
-              handleSubmit={handleSubmit}
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col">
+        {/* Chat Header */}
+        <div className="border-b p-4">
+          <h2 className="text-lg font-medium">{title || 'Chat'}</h2>
+          {editPoint && (
+            <DiffViewer
+              diff={editPoint}
+              isExpanded={isDiffExpanded(editPoint.id)}
             />
+          )}
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto" ref={messagesContainerRef}>
+          {messages.length > 0 ? (
+            messages.map((message, index) => (
+              <div
+                key={message.id}
+                className={cn(
+                  "group relative mb-4 flex items-start md:px-4",
+                  message.role === "user" ? "justify-end" : "justify-start"
+                )}
+              >
+                <div
+                  className={cn(
+                    "flex w-full max-w-2xl flex-col gap-2 rounded-lg px-4 py-2",
+                    message.role === "user"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground"
+                  )}
+                >
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm font-semibold">
+                      {message.role === "user" ? "You" : "Assistant"}
+                    </div>
+                    {message.role === "user" && (
+                      <div className="flex items-center gap-2">
+                        {editingMessageId === message.id ? (
+                          <div className="flex items-center gap-4 mr-2">
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                name="editMode"
+                                value="direct"
+                                checked={editMode === 'direct'}
+                                onChange={(e) => setEditMode(e.target.value as 'direct' | 'fork')}
+                                className="radio"
+                              />
+                              <span className="text-xs">Direct Edit</span>
+                            </label>
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                name="editMode"
+                                value="fork"
+                                checked={editMode === 'fork'}
+                                onChange={(e) => setEditMode(e.target.value as 'direct' | 'fork')}
+                                className="radio"
+                              />
+                              <span className="text-xs">Fork on Edit</span>
+                            </label>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setEditingMessageId(message.id)}
+                            className="text-xs px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 transition-colors"
+                          >
+                            {editMode === 'fork' ? 'Fork' : 'Edit'}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <MessageContent
+                    message={message}
+                    isEditing={editingMessageId === message.id}
+                    onEditStart={() => setEditingMessageId(message.id)}
+                    onEditComplete={(content) => handleMessageEdit(message.id, content)}
+                    isDraft={isFork && status === 'draft'}
+                    isForkMessage={isFork && message.id === editPoint?.id}
+                    onSubmitFork={message.id === editPoint?.id ? handleSubmitFork : undefined}
+                    editMode={editMode}
+                  />
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <p className="text-muted-foreground">
+                No messages yet. Start a conversation!
+              </p>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input Area */}
+        <div className="border-t p-4">
+          <div className="mx-auto sm:max-w-2xl sm:px-4">
+            <div className="flex h-full items-center justify-center">
+              <MultimodalInput
+                input={input}
+                setInput={setInput}
+                isLoading={isLoading}
+                stop={stop}
+                attachments={attachments}
+                setAttachments={setAttachments}
+                messages={messages}
+                append={async (message: ExtendedMessage | CreateMessage) => {
+                  await append(message as ExtendedMessage);
+                  return null;
+                }}
+                handleSubmit={handleSubmit}
+              />
+            </div>
           </div>
         </div>
       </div>

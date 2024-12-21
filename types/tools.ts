@@ -1,3 +1,5 @@
+import { Message, ToolInvocation } from 'ai';
+
 export interface ToolDefinition {
 	name: string;
 	description: string;
@@ -18,3 +20,20 @@ export interface ToolResult {
 		details?: any;
 	};
 }
+
+// First, define the custom tool state type
+type CustomToolState = 'result' | 'partial-call' | 'call';
+
+// Define the custom tool invocation that matches the AI package structure
+export interface CustomToolInvocation {
+	toolCallId: string;
+	toolName: string;
+	args: string;
+	state: CustomToolState;
+	result?: string;
+}
+
+// Create a base message type that includes our custom tool invocations
+export type ExtendedMessage = Omit<Message, 'toolInvocations'> & {
+	toolInvocations?: CustomToolInvocation[];
+};

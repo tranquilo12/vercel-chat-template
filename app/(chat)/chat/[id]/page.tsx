@@ -60,20 +60,20 @@ export default async function Page({ params }: { params: any }) {
     }
   }
 
-  const preprocessedMessages = params.id 
+  const preprocessedMessages = params.id
     ? (Array.isArray(chatData?.messages) ? chatData.messages : []).map(preprocessMessage) as Array<CoreMessage>
     : [];
 
   const chat = params.id
     ? {
-        ...chatData,
-        messages: convertToUIMessages(preprocessedMessages),
-      }
+      ...chatData,
+      messages: convertToUIMessages(preprocessedMessages),
+    }
     : {
-        id: chatId,
-        messages: [],
-        userId: session.user.id,
-      };
+      id: chatId,
+      messages: [],
+      userId: session.user.id,
+    };
 
   return <PreviewChat id={chat.id} initialMessages={chat.messages} />;
 }

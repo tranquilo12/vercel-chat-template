@@ -13,6 +13,8 @@ import React, {
 } from "react";
 import { toast } from "sonner";
 
+import { ExtendedMessage } from "@/types/tools";
+
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
 import useWindowSize from "./use-window-size";
@@ -49,9 +51,9 @@ export function MultimodalInput({
   stop: () => void;
   attachments: Array<Attachment>;
   setAttachments: Dispatch<SetStateAction<Array<Attachment>>>;
-  messages: Array<Message>;
+  messages: Array<ExtendedMessage>;
   append: (
-    message: Message | CreateMessage,
+    message: ExtendedMessage | CreateMessage,
     chatRequestOptions?: ChatRequestOptions
   ) => Promise<string | null | undefined>;
   handleSubmit: (

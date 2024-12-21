@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/app/(auth)/auth";
-import { saveFork } from "@/db/queries";
+import { upsertFork } from "@/db/queries";
+import { MessageDiff } from "@/types/fork";
 
 export async function POST(
 	req: Request,
@@ -16,26 +17,30 @@ export async function POST(
 		const body = await req.json();
 		const { messages, editedMessageId, editPoint } = body;
 
-		// Get the last message ID if editedMessageId isn't provided
+		if (!messages || !Array.isArray(messages)) {
+			throw new Error('Messages array is required');
+		}
+
 		const lastMessageId = !editedMessageId && messages.length > 0
 			? messages[messages.length - 1].id
 			: editedMessageId;
 
-		// Ensure editPoint has all required fields
 		const normalizedEditPoint = {
-			messageId: editPoint?.messageId || lastMessageId,
-			originalContent: editPoint?.originalContent || messages[messages.length - 1]?.content || '',
-			newContent: editPoint?.newContent || messages[messages.length - 1]?.content || '',
+			id: editPoint?.id || lastMessageId,
+			role: editPoint?.role || messages[messages.length - 1]?.role || 'user' as 'user' | 'assistant' | 'system',
+			content: editPoint?.content || messages[messages.length - 1]?.content || '',
 			timestamp: editPoint?.timestamp || new Date().toISOString()
 		};
 
-		const updatedFork = await saveFork({
+		const updatedFork = await upsertFork({
 			id: params.forkId,
 			chatId: params.id,
+			parentMessageId: lastMessageId,
 			messages: messages,
-			editedMessageId: lastMessageId,
-			editPoint: normalizedEditPoint,
-			title: body.title
+			baseMessages: messages.slice(0, -1),
+			editPoint: normalizedEditPoint as MessageDiff,
+			title: body.title,
+			status: 'draft'
 		});
 
 		return NextResponse.json(updatedFork);

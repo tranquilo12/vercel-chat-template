@@ -8,6 +8,13 @@
       "when": 1728598022383,
       "tag": "0000_keen_devos",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1734677673983,
+      "tag": "0001_ancient_sage",
+      "breakpoints": true
     }
   ]
 }
