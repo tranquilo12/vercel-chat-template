@@ -55,6 +55,9 @@ export const History = ({ user }: { user: User | undefined }) => {
     mutate,
   } = useSWR<Array<Chat>>(user ? "/api/history" : null, fetcher, {
     fallbackData: [],
+    onSuccess: (data) => {
+      console.log('Fetched history:', data);
+    },
   });
 
   // Fetch forks for each chat
@@ -69,6 +72,7 @@ export const History = ({ user }: { user: User | undefined }) => {
           forks[chat.id] = data.forks;
         }
       }
+      console.log('Fetched forks by chat:', forks);
       return forks;
     }
   );
@@ -90,7 +94,13 @@ export const History = ({ user }: { user: User | undefined }) => {
       ? `/api/fork?id=${deleteId}`
       : `/api/chat?id=${deleteId}`;
 
-    const deletePromise = fetch(endpoint, { method: "DELETE" });
+    const deletePromise = fetch(endpoint, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ id: deleteId }),
+    });
 
     toast.promise(deletePromise, {
       loading: `Deleting ${isDeleteFork ? 'fork' : 'chat'}...`,
@@ -227,9 +237,13 @@ export const History = ({ user }: { user: User | undefined }) => {
                               className="flex flex-row gap-2 items-center justify-start w-full h-fit font-normal p-1.5 rounded-sm"
                               variant="ghost"
                               onClick={() => {
-                                setDeleteId(chat.id);
-                                setIsDeleteFork(false);
-                                setShowDeleteDialog(true);
+                                if (typeof chat.id === 'string') {
+                                  setDeleteId(chat.id);
+                                  setIsDeleteFork(false);
+                                  setShowDeleteDialog(true);
+                                } else {
+                                  console.error('Invalid chat.id:', chat.id);
+                                }
                               }}
                             >
                               <TrashIcon />
@@ -268,9 +282,13 @@ export const History = ({ user }: { user: User | undefined }) => {
                               size="icon"
                               className="size-6"
                               onClick={() => {
-                                setDeleteId(fork.id);
-                                setIsDeleteFork(true);
-                                setShowDeleteDialog(true);
+                                if (typeof fork.id === 'string') {
+                                  setDeleteId(fork.id);
+                                  setIsDeleteFork(true);
+                                  setShowDeleteDialog(true);
+                                } else {
+                                  console.error('Invalid fork.id:', fork.id);
+                                }
                               }}
                             >
                               <TrashIcon size={14} />

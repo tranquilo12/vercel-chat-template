@@ -106,7 +106,9 @@ export async function GET(req: Request) {
 	}
 
 	try {
+		console.log('Fetching forks for chatId:', chatId);
 		const forks = await getChatForks({ chatId });
+		console.log('Forks fetched for chatId:', chatId, forks);
 		return NextResponse.json({ forks });
 	} catch (error) {
 		console.error("Error listing forks:", error);
@@ -121,15 +123,29 @@ export async function DELETE(req: Request) {
 	}
 
 	try {
-		const { id } = await req.json();
+		const requestBody = await req.text();
+		console.log("Raw request body:", requestBody);
+
+		const { id } = JSON.parse(requestBody);
+
 		if (!id) {
 			return new Response("Missing fork ID", { status: 400 });
 		}
 		console.log('Deleting fork:', { id });
-		await deleteForkById(id);
-		return NextResponse.json({ status: "ok", message: `Fork ${id} deleted.` });
+		await deleteForkById({ id });
+		const response = {
+			status: "ok",
+			message: `Fork ${id} deleted.`,
+		};
+		console.log('Sending response:', response);
+		return NextResponse.json(response);
 	} catch (error) {
 		console.error("Error deleting fork:", error);
-		return new Response("Failed to delete fork", { status: 500 });
+		const response = {
+			status: "error",
+			message: "Failed to delete fork",
+		};
+		console.log('Sending error response:', response);
+		return NextResponse.json(response, { status: 500 });
 	}
 }

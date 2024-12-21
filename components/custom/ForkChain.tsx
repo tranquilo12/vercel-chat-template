@@ -39,11 +39,22 @@ export function ForkChain({ forkChain, currentForkId, chatId, onForkSelect }: Fo
 	const handleDeleteFork = async (forkId: string, e: React.MouseEvent) => {
 		e.stopPropagation();
 		try {
-			await fetch("/api/fork", {
+			const response = await fetch("/api/fork", {
 				method: "DELETE",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ id: forkId }),
 			});
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const data = await response.json();
+
+			if (data.status !== "ok") {
+				throw new Error(data.message || "Failed to delete fork");
+			}
+
 			setAllForks((prev) => prev.filter((f) => f.id !== forkId));
 			if (currentForkId === forkId) {
 				router.push(`/chat/${chatId}`);

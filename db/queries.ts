@@ -134,39 +134,41 @@ export async function getChatsByUserId({ id }: { id: string }) {
 
 export async function getChatById({ id }: { id: string }) {
     try {
+        console.log('Fetching chat by ID:', id);
         const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
+        console.log('Chat fetched:', selectedChat);
         return selectedChat;
     } catch (error) {
-        console.error("Failed to get chat by id from database");
+        console.error("Failed to get chat by id from database", error);
         throw error;
     }
 }
 
 export async function getChatForks({ chatId }: { chatId: string }) {
     try {
-        return await db
+        console.log('Fetching forks for chat:', chatId);
+        const forks = await db
             .select()
             .from(fork)
             .where(eq(fork.chatId, chatId))
             .orderBy(desc(fork.createdAt));
+        console.log('Forks fetched:', forks);
+        return forks;
     } catch (error) {
-        console.error("Failed to get chat forks from database");
+        console.error("Failed to get forks for chat from database", error);
         throw error;
     }
 }
 
 export async function getForkById({ id }: { id: string }): Promise<Fork | null> {
     console.log('getForkById: Attempting to fetch fork with id:', id);
-
     try {
         const [selectedFork] = await db.select().from(fork).where(eq(fork.id, id));
         console.log('getForkById: Raw database result:', selectedFork);
-
         if (!selectedFork) {
             console.log('getForkById: No fork found with id:', id);
             return null;
         }
-
         // Transform database record to Fork type
         const transformedFork = {
             ...selectedFork,
@@ -176,23 +178,21 @@ export async function getForkById({ id }: { id: string }): Promise<Fork | null> 
             editPoint: selectedFork.editPoint || null,
             status: selectedFork.status || 'draft',
             createdAt: selectedFork.createdAt || new Date(),
-            title: selectedFork.title || undefined
+            title: selectedFork.title || undefined,
         } as Fork;
-
         console.log('getForkById: Transformed fork:', {
             id: transformedFork.id,
             chatId: transformedFork.chatId,
             parentMessageId: transformedFork.parentMessageId,
             messageDiffsCount: transformedFork.messageDiffs.length,
             appendedMessagesCount: transformedFork.appendedMessages.length,
-            status: transformedFork.status
+            status: transformedFork.status,
         });
-
         return transformedFork;
     } catch (error) {
-        console.error("getForkById: Failed to get fork from database:", {
+        console.error('getForkById: Failed to get fork from database:', {
             error,
-            stackTrace: error instanceof Error ? error.stack : undefined
+            stackTrace: error instanceof Error ? error.stack : undefined,
         });
         throw error;
     }
@@ -200,6 +200,7 @@ export async function getForkById({ id }: { id: string }): Promise<Fork | null> 
 
 export async function deleteForkById({ id }: { id: string }) {
     try {
+        console.log('deleteForkById: Attempting to delete fork with id:', id);
         return await db.delete(fork).where(eq(fork.id, id));
     } catch (error) {
         console.error("Failed to delete fork by id from database", error);
