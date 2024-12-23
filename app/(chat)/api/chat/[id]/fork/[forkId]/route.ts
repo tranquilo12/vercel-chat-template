@@ -1,8 +1,11 @@
-import { NextResponse } from "next/server";
+import { StreamData, streamText, convertToCoreMessages, JSONValue } from 'ai';
+import { z } from 'zod';
 
+import { openaiModel } from "@/ai";
 import { auth } from "@/app/(auth)/auth";
-import { upsertFork } from "@/db/queries";
-import { MessageDiff } from "@/types/fork";
+import { upsertFork, getForkById } from "@/db/queries";
+import { getForkChain, getForkMessages } from "@/lib/forkUtils";
+import { ExtendedMessage } from '@/types/tools';
 
 export async function POST(
 	req: Request,
@@ -14,38 +17,89 @@ export async function POST(
 	}
 
 	try {
-		const body = await req.json();
-		const { messages, editedMessageId, editPoint } = body;
+		const { messages, editPoint, parentMessageId } = await req.json();
+		const data = new StreamData();
 
-		if (!messages || !Array.isArray(messages)) {
-			throw new Error('Messages array is required');
-		}
+		// Convert messages to core format directly, matching main chat route
+		const coreMessages = convertToCoreMessages(messages);
 
-		const lastMessageId = !editedMessageId && messages.length > 0
-			? messages[messages.length - 1].id
-			: editedMessageId;
+		const result = await streamText({
+			model: openaiModel,
+			messages: coreMessages,
+			experimental_toolCallStreaming: true,
+			tools: {
+				executePythonCode: {
+					description: 'Execute Python code and return the output',
+					parameters: z.object({
+						code: z.string().describe('The Python code to execute'),
+						output_format: z.enum(['plain', 'rich', 'json']).describe('The format of the output'),
+						timeout: z.number().optional().describe('Timeout in seconds for code execution')
+					}),
+					execute: async ({ code, output_format, timeout }) => {
+						try {
+							const response = await fetch('http://localhost:8000/api/v1/execute', {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({ code, output_format, timeout })
+							});
+							if (!response.ok) {
+								throw new Error(`HTTP error! status: ${response.status}`);
+							}
+							return response.json();
+						} catch (error) {
+							return {
+								success: false,
+								error: {
+									type: 'ExecutionError',
+									message: error instanceof Error ? error.message : 'Unknown error occurred'
+								}
+							};
+						}
+					}
+				}
+			},
+			onChunk: async ({ chunk }) => {
+				data.append(chunk as JSONValue);
+			},
+			onFinish: async ({ steps, responseMessages }) => {
+				try {
+					const messagesWithTools = messages.map((msg: any) => ({
+						...msg,
+						toolInvocations: msg.toolInvocations || []
+					}));
 
-		const normalizedEditPoint = {
-			id: editPoint?.id || lastMessageId,
-			role: editPoint?.role || messages[messages.length - 1]?.role || 'user' as 'user' | 'assistant' | 'system',
-			content: editPoint?.content || messages[messages.length - 1]?.content || '',
-			timestamp: editPoint?.timestamp || new Date().toISOString()
-		};
+					const responseWithTools = (responseMessages as ExtendedMessage[]).map(msg => ({
+						...msg,
+						toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : []
+					}));
 
-		const updatedFork = await upsertFork({
-			id: params.forkId,
-			chatId: params.id,
-			parentMessageId: lastMessageId,
-			messages: messages,
-			baseMessages: messages.slice(0, -1),
-			editPoint: normalizedEditPoint as MessageDiff,
-			title: body.title,
-			status: 'draft'
+					// Get base messages for fork context
+					const fork = await getForkById({ id: params.forkId });
+					const baseMessages = fork?.baseMessages || [];
+
+					await upsertFork({
+						id: params.forkId,
+						chatId: params.id,
+						parentMessageId: parentMessageId || messages[messages.length - 1]?.id,
+						messages: [...messagesWithTools, ...responseWithTools],
+						baseMessages,
+						editPoint,
+						status: 'draft'
+					});
+				} catch (error) {
+					console.error('Failed to save fork:', error);
+					data.append({
+						type: 'error',
+						message: 'Failed to save fork',
+					});
+				}
+				await data.close();
+			}
 		});
 
-		return NextResponse.json(updatedFork);
+		return result.toDataStreamResponse({ data });
 	} catch (error) {
-		console.error("Error updating fork chat:", error);
-		return new Response(`Failed to update fork chat: ${error instanceof Error ? error.message : 'Unknown error'}`, { status: 500 });
+		console.error("Error in fork continuation:", error);
+		return new Response("Failed to continue fork", { status: 500 });
 	}
 } 

@@ -232,25 +232,23 @@ export async function upsertFork({
     parentFork?: Fork | null;
 }) {
     try {
-        const safeMessages = Array.isArray(messages) ? messages : [];
-        const safeBaseMessages = Array.isArray(baseMessages) ? baseMessages : [];
 
         const messageDiffs: MessageDiff[] = [];
         const appendedMessages: ExtendedMessage[] = [];
 
-        safeMessages.forEach((msg) => {
+        // Process all messages
+        messages.forEach((msg) => {
             if (!msg) return;
 
-            const baseMsg = safeBaseMessages.find(m => m?.id === msg.id);
+            const baseMsg = baseMessages.find(m => m?.id === msg.id);
             if (baseMsg) {
                 const contentChanged = baseMsg.content !== msg.content;
-                const toolsChanged = JSON.stringify(baseMsg.toolInvocations || []) !==
-                    JSON.stringify(msg.toolInvocations || []);
+                const toolsChanged = !areToolInvocationsEqual(baseMsg.toolInvocations, msg.toolInvocations);
 
                 if (contentChanged || toolsChanged) {
                     messageDiffs.push({
                         id: msg.id,
-                        role: msg.role as 'user' | 'assistant' | 'system',
+                        role: msg.role as 'user' | 'assistant' | 'system' | 'tool',
                         content: baseMsg.content,
                         newContent: msg.content,
                         timestamp: new Date().toISOString(),
@@ -258,7 +256,6 @@ export async function upsertFork({
                     });
                 }
             } else {
-                // Ensure tool invocations are included in appended messages
                 appendedMessages.push({
                     ...msg,
                     toolInvocations: msg.toolInvocations || []
@@ -275,8 +272,8 @@ export async function upsertFork({
             chatId,
             parentChatId,
             parentMessageId,
-            messages: JSON.stringify(safeMessages),
-            baseMessages: JSON.stringify(safeBaseMessages),
+            messages: JSON.stringify(messages),
+            baseMessages: JSON.stringify(baseMessages),
             messageDiffs: messageDiffs,
             appendedMessages: appendedMessages,
             ancestry: ancestry,
@@ -308,8 +305,8 @@ export async function upsertFork({
 
         return {
             ...dbForkData,
-            messages: safeMessages,
-            baseMessages: safeBaseMessages,
+            messages,
+            baseMessages,
             messageDiffs,
             appendedMessages,
             ancestry,
@@ -319,6 +316,19 @@ export async function upsertFork({
         console.error('Error in upsertFork:', error);
         throw error;
     }
+}
+
+// Helper function for deep comparison
+function areToolInvocationsEqual(a: CustomToolInvocation[] = [], b: CustomToolInvocation[] = []): boolean {
+    if (a.length !== b.length) return false;
+    return a.every((invocationA, index) => {
+        const invocationB = b[index];
+        return invocationA.toolCallId === invocationB.toolCallId &&
+            invocationA.toolName === invocationB.toolName &&
+            invocationA.args === invocationB.args &&
+            invocationA.result === invocationB.result &&
+            invocationA.state === invocationB.state;
+    });
 }
 
 export async function updateChatMessage({

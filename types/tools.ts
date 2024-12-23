@@ -22,7 +22,7 @@ export interface ToolResult {
 }
 
 // First, define the custom tool state type
-type CustomToolState = 'result' | 'partial-call' | 'call';
+export type CustomToolState = 'result' | 'partial-call' | 'call';
 
 // Define the custom tool invocation that matches the AI package structure
 export interface CustomToolInvocation {
@@ -30,7 +30,7 @@ export interface CustomToolInvocation {
 	toolName: string;
 	args: string;
 	state: CustomToolState;
-	result?: string;
+	result: any;
 }
 
 // Create a base message type that includes our custom tool invocations

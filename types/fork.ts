@@ -2,11 +2,15 @@ import { CustomToolInvocation, ExtendedMessage } from "@/types/tools";
 
 export interface MessageDiff {
 	id: string;
-	role: 'user' | 'assistant' | 'system';
+	role: 'user' | 'assistant' | 'system' | 'tool';
 	content: string;
 	newContent: string;
 	timestamp: string;
 	toolInvocations?: CustomToolInvocation[];
+	toolResults?: Array<{
+		toolCallId: string;
+		result: string;
+	}>;
 }
 
 export interface ForkAncestry {

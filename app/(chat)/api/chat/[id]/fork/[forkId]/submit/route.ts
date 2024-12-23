@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/app/(auth)/auth";
-import { upsertFork } from "@/db/queries";
+import { upsertFork, getForkById } from "@/db/queries";
+import { ExtendedMessage } from "@/types/tools";
 
 export async function PATCH(
 	req: Request,
@@ -13,18 +14,27 @@ export async function PATCH(
 	}
 
 	try {
-		const { status, messages } = await req.json();
+		const { status, messages, parentMessageId } = await req.json();
+
+		// Retrieve the existing fork to get the base messages
+		const existingFork = await getForkById({ id: params.forkId });
+		if (!existingFork) {
+			return new Response("Fork not found", { status: 404 });
+		}
+
+		// Use the existing fork's base messages for the update
+		const baseMessages = existingFork.baseMessages;
 
 		const updatedFork = await upsertFork({
 			id: params.forkId,
 			chatId: params.id,
 			status: status || 'submitted',
-			parentMessageId: params.parentMessageId || '',
-			messages: messages || [],
-			baseMessages: messages || [],
-			title: '',
-			editPoint: undefined,
-			parentFork: undefined
+			parentMessageId: parentMessageId || '',
+			messages: messages as ExtendedMessage[] || [],
+			baseMessages: baseMessages, // Use existing base messages
+			title: existingFork.title, // Keep the existing title
+			editPoint: existingFork.editPoint || undefined, // Keep the existing edit point
+			parentFork: existingFork // Pass the existing fork as the parent
 		});
 
 		return NextResponse.json(updatedFork);

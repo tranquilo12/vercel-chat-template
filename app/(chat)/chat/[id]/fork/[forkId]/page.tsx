@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { Chat } from "@/components/custom/chat";
 import { getChatById, getForkById } from "@/db/queries";
-import { getForkChain, reconstructMessages } from "@/lib/forkUtils";
+import { getForkChain, getForkMessages } from "@/lib/forkUtils";
 import { convertToUIMessages } from "@/lib/utils";
 
 export default async function ForkPage({
@@ -47,7 +47,7 @@ export default async function ForkPage({
 	console.log('Base messages count:', baseMessages.length);
 
 	// Reconstruct messages through the fork chain
-	const reconstructedMessages = reconstructMessages(baseMessages, forkChain);
+	const reconstructedMessages = await getForkMessages(forkId);
 	console.log('Reconstructed messages count:', reconstructedMessages.length);
 
 	return (

@@ -302,7 +302,11 @@ const CopyButton = ({ text }: { text: string }) => {
   );
 };
 
-const ToolDisplay = ({ tool }: { tool: any }) => {
+interface ToolDisplayProps {
+  tool: CustomToolInvocation;
+}
+
+const ToolDisplay = ({ tool }: ToolDisplayProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const parsedArgs = useMemo(() => {
@@ -315,7 +319,8 @@ const ToolDisplay = ({ tool }: { tool: any }) => {
     }
   }, [tool.args]);
 
-  const isStreaming = tool.state === "partial-call" || tool.state === "streaming";
+  const isStreaming = tool.state === "partial-call" || tool.state === "call";
+  const hasResult = tool.state === "result" && tool.result;
   const isCodeBlock = parsedArgs?.code &&
     (tool.toolName === "executePythonCode" || parsedArgs.language);
 
@@ -339,6 +344,11 @@ const ToolDisplay = ({ tool }: { tool: any }) => {
               (Streaming...)
             </span>
           )}
+          {hasResult && (
+            <span className="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-500">
+              Complete
+            </span>
+          )}
         </div>
         {isExpanded ? (
           <ChevronDown className="size-4" />
@@ -351,23 +361,41 @@ const ToolDisplay = ({ tool }: { tool: any }) => {
         <div className="p-4 space-y-4">
           <div className="overflow-x-auto">
             <div className="max-w-[calc(100vw-4rem)] md:max-w-[calc(100vw-16rem)]">
-              {isCodeBlock ? (
-                <div className="prose dark:prose-invert max-w-none relative">
-                  <pre className="text-sm w-[80dvw] md:max-w-[500px] overflow-x-scroll bg-zinc-100 dark:bg-zinc-800 p-3 rounded-md">
-                    <code className={parsedArgs.language || "plaintext"}>
-                      {parsedArgs.code || "No code provided"}
-                    </code>
-                  </pre>
+              {/* Tool Arguments */}
+              <div className="mb-4">
+                <h4 className="text-sm font-medium mb-2">Arguments:</h4>
+                {isCodeBlock ? (
+                  <div className="prose dark:prose-invert max-w-none relative">
+                    <pre className="text-sm w-[80dvw] md:max-w-[500px] overflow-x-scroll bg-zinc-100 dark:bg-zinc-800 p-3 rounded-md">
+                      <code className={parsedArgs.language || "plaintext"}>
+                        {parsedArgs.code || "No code provided"}
+                      </code>
+                    </pre>
+                  </div>
+                ) : (
+                  <JsonFormatter
+                    content={
+                      typeof tool.args === "string"
+                        ? tool.args
+                        : JSON.stringify(tool.args || {})
+                    }
+                    isStreaming={isStreaming}
+                  />
+                )}
+              </div>
+
+              {/* Tool Result */}
+              {hasResult && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Result:</h4>
+                  <div className="prose dark:prose-invert">
+                    <MarkdownComponent>
+                      {typeof tool.result === "object"
+                        ? "```json\n" + JSON.stringify(tool.result, null, 2) + "\n```"
+                        : String(tool.result)}
+                    </MarkdownComponent>
+                  </div>
                 </div>
-              ) : (
-                <JsonFormatter
-                  content={
-                    typeof tool.args === "string"
-                      ? tool.args
-                      : JSON.stringify(tool.args || {})
-                  }
-                  isStreaming={isStreaming}
-                />
               )}
             </div>
           </div>

@@ -1,8 +1,8 @@
-import { Message, ToolInvocation, ChatRequestOptions } from 'ai';
+import { ToolInvocation, ChatRequestOptions } from 'ai';
 import React, { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
-import { ExtendedMessage, CustomToolInvocation } from '@/types/tools';
+import { ExtendedMessage } from '@/types/tools';
 
 
 
@@ -45,54 +45,57 @@ const processStreamLine = (
             break;
 
         case 'b': // tool_call_streaming_start
-            const toolStartEvent = JSON.parse(dataStr);
-            const newToolInvocation: ToolInvocation = {
-                toolCallId: toolStartEvent.toolCallId,
-                toolName: toolStartEvent.toolName,
-                state: 'call',
-                args: '',
-            };
-            setMessages((prevMessages) => {
-                const lastMessage = prevMessages[prevMessages.length - 1];
-                return lastMessage.id === aiMessage.id
-                    ? [...prevMessages.slice(0, -1),
-                    {
+            try {
+                const toolStartEvent = JSON.parse(dataStr);
+                const newToolInvocation: ToolInvocation = {
+                    toolCallId: toolStartEvent.toolCallId,
+                    toolName: toolStartEvent.toolName,
+                    state: 'call',
+                    args: '',
+                };
+                setMessages((prevMessages) => {
+                    const lastMessage = prevMessages[prevMessages.length - 1];
+                    if (lastMessage.id !== aiMessage.id) return prevMessages;
+                    return [...prevMessages.slice(0, -1), {
                         ...lastMessage,
                         toolInvocations: [...(lastMessage.toolInvocations || []), newToolInvocation]
-                    }]
-                    : prevMessages;
-            });
+                    }];
+                });
+            } catch (error) {
+                console.error('Error processing tool start:', error);
+            }
             break;
 
         case 'c': // tool_call_delta
-            const deltaEvent = JSON.parse(dataStr);
-            setMessages((prevMessages) => {
-                const lastMessage = prevMessages[prevMessages.length - 1];
-                if (lastMessage.id !== aiMessage.id) return prevMessages;
+            try {
+                const deltaEvent = JSON.parse(dataStr);
+                setMessages((prevMessages) => {
+                    const lastMessage = prevMessages[prevMessages.length - 1];
+                    if (lastMessage.id !== aiMessage.id) return prevMessages;
 
-                const toolInvocations = lastMessage.toolInvocations || [];
-                const toolInvocationIndex = toolInvocations.findIndex(
-                    (invocation: CustomToolInvocation) => invocation.toolCallId === deltaEvent.toolCallId
-                );
+                    const toolInvocations = lastMessage.toolInvocations || [];
+                    const toolInvocationIndex = toolInvocations.findIndex(
+                        invocation => invocation.toolCallId === deltaEvent.toolCallId
+                    );
 
-                if (toolInvocationIndex >= 0) {
-                    const currentInvocation = toolInvocations[toolInvocationIndex];
-                    const updatedArgs = (currentInvocation.args as string || '') + deltaEvent.argsTextDelta;
+                    if (toolInvocationIndex >= 0) {
+                        const updatedToolInvocations = [...toolInvocations];
+                        const currentInvocation = updatedToolInvocations[toolInvocationIndex];
+                        updatedToolInvocations[toolInvocationIndex] = {
+                            ...currentInvocation,
+                            args: (currentInvocation.args || '') + deltaEvent.argsTextDelta
+                        };
 
-                    const updatedInvocation = {
-                        ...currentInvocation,
-                        argsTextDelta: updatedArgs,
-                        args: updatedArgs,
-                    };
-
-                    const updatedToolInvocations = [...toolInvocations];
-                    updatedToolInvocations[toolInvocationIndex] = updatedInvocation;
-
-                    return [...prevMessages.slice(0, -1),
-                    { ...lastMessage, toolInvocations: updatedToolInvocations }];
-                }
-                return prevMessages;
-            });
+                        return [...prevMessages.slice(0, -1), {
+                            ...lastMessage,
+                            toolInvocations: updatedToolInvocations
+                        }];
+                    }
+                    return prevMessages;
+                });
+            } catch (error) {
+                console.error('Error processing tool delta:', error);
+            }
             break;
 
         case 'e': // tool_call_finish
@@ -188,7 +191,7 @@ const processStreamLine = (
                     return [...prevMessages, toolResultMessage];
                 });
             } catch (error) {
-                console.error('Error processing tool output:', error);
+                console.error('Error processing tool result:', error);
             }
             break;
     }
