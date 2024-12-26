@@ -62,17 +62,20 @@ export const History = ({ user }: { user: User | undefined }) => {
 
   // Fetch forks for each chat
   const { data: forksByChat } = useSWR<Record<string, Fork[]>>(
-    user && history?.length ? `/api/forks-by-chat` : null,
+    user && history?.length ? `/api/fork` : null,
     async () => {
       const forks: Record<string, Fork[]> = {};
       for (const chat of history || []) {
-        const res = await fetch(`/api/fork?chatId=${chat.id}`);
-        if (res.ok) {
+        try {
+          const res = await fetch(`/api/fork?chatId=${chat.id}`);
+          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
           const data = await res.json();
           forks[chat.id] = data.forks;
+        } catch (error) {
+          console.error(`Failed to fetch forks for chat ${chat.id}:`, error);
+          forks[chat.id] = [];
         }
       }
-      console.log('Fetched forks by chat:', forks);
       return forks;
     }
   );

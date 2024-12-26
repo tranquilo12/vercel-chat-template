@@ -5,7 +5,6 @@ import { Chat } from "@/components/custom/chat";
 import { getChatById, getForkById } from "@/db/queries";
 import { getForkChain, getForkMessages } from "@/lib/server/forkUtils.server";
 import { convertToUIMessages } from "@/lib/utils";
-import { ExtendedMessage } from "@/types/tools";
 
 export default async function ForkPage({
 	params: { id, forkId },
