@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/app/(auth)/auth";
-import { upsertFork, getForkById, getChatForks, deleteForkById } from "@/db/queries";
+import { upsertFork, getForkById, deleteForkById } from "@/db/queries";
+import { getForkMessages } from "@/lib/server/forkUtils.server";
 import { MessageDiff } from "@/types/fork";
+
 
 export async function POST(req: Request) {
 	const session = await auth();
@@ -93,26 +95,22 @@ export async function PATCH(req: Request) {
 	}
 }
 
-export async function GET(req: Request) {
-	const session = await auth();
-	if (!session) {
-		return new Response("Unauthorized", { status: 401 });
-	}
+export async function GET(request: Request) {
+	const { searchParams } = new URL(request.url);
+	const forkId = searchParams.get('id');
 
-	const { searchParams } = new URL(req.url);
-	const chatId = searchParams.get("chatId");
-	if (!chatId) {
-		return new Response("Missing chatId", { status: 400 });
+	if (!forkId) {
+		return new Response('Fork ID is required', { status: 400 });
 	}
 
 	try {
-		console.log('Fetching forks for chatId:', chatId);
-		const forks = await getChatForks({ chatId });
-		console.log('Forks fetched for chatId:', chatId, forks);
-		return NextResponse.json({ forks });
+		const messages = await getForkMessages(forkId);
+		return new Response(JSON.stringify(messages), {
+			headers: { 'Content-Type': 'application/json' },
+		});
 	} catch (error) {
-		console.error("Error listing forks:", error);
-		return new Response("Failed to list forks", { status: 500 });
+		console.error('Error getting fork messages:', error);
+		return new Response('Internal Server Error', { status: 500 });
 	}
 }
 

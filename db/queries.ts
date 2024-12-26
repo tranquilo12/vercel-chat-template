@@ -1,6 +1,6 @@
 "server-only";
 
-import { CoreMessage, Message } from "ai";
+import { CoreMessage } from "ai";
 import { genSaltSync, hashSync } from "bcrypt-ts";
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -54,7 +54,7 @@ export async function saveChat({
     userId,
 }: {
     id: string;
-    messages: CoreMessage[];
+    messages: ExtendedMessage[];
     userId: string;
 }) {
     if (!id || !messages || !userId) {
@@ -66,12 +66,33 @@ export async function saveChat({
         return;
     }
 
-    const normalizedMessages = messages.map(msg => ({
-        ...msg,
-        content: msg.content,
-        toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : [],
-        role: msg.role
-    }));
+    const normalizedMessages = messages.map(msg => {
+        // Ensure proper handling of content that might be an array or object
+        const content = typeof msg.content === 'string'
+            ? msg.content
+            : JSON.stringify(msg.content);
+
+        // Properly handle tool invocations
+        const toolInvocations = 'toolInvocations' in msg && Array.isArray(msg.toolInvocations)
+            ? msg.toolInvocations.map((invocation: any) => ({
+                ...invocation,
+                args: typeof invocation.args === 'string'
+                    ? invocation.args
+                    : JSON.stringify(invocation.args),
+                result: invocation.result
+                    ? JSON.stringify(invocation.result)
+                    : null,
+                state: invocation.state || 'result'
+            }))
+            : [];
+
+        return {
+            ...msg,
+            content,
+            toolInvocations,
+            role: msg.role
+        };
+    });
 
     try {
         const selectedChats = await db.select().from(chat).where(eq(chat.id, id));
@@ -116,15 +137,30 @@ export async function getChatsByUserId({ id }: { id: string }) {
 
         return chats.map(chatData => ({
             ...chatData,
-            messages: (chatData.messages as CoreMessage[]).map((msg: any) => ({
-                ...msg,
-                // Preserve the original content structure
-                content: Array.isArray(msg.content)
-                    ? msg.content
-                    : msg.content,
-                // Properly reconstruct tool invocations
-                toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : []
-            })) || []
+            messages: (chatData.messages as CoreMessage[]).map((msg: any) => {
+                // Parse content if it's stringified
+                const content = msg.content && typeof msg.content === 'string' && msg.content.startsWith('{')
+                    ? JSON.parse(msg.content)
+                    : msg.content;
+
+                // Parse tool invocations
+                const toolInvocations = msg.toolInvocations?.map((invocation: any) => ({
+                    ...invocation,
+                    args: typeof invocation.args === 'string' && invocation.args.startsWith('{')
+                        ? JSON.parse(invocation.args)
+                        : invocation.args,
+                    result: invocation.result && typeof invocation.result === 'string'
+                        ? JSON.parse(invocation.result)
+                        : invocation.result || {},
+                    state: invocation.state || 'result'
+                })) || [];
+
+                return {
+                    ...msg,
+                    content,
+                    toolInvocations
+                };
+            }) || []
         }));
     } catch (error) {
         console.error("Failed to get chats by user from database");
@@ -335,10 +371,12 @@ export async function updateChatMessage({
     chatId,
     messageId,
     content,
+    toolInvocations
 }: {
     chatId: string;
     messageId: string;
     content: string;
+    toolInvocations?: CustomToolInvocation[];
 }) {
     try {
         const [selectedChat] = await db
@@ -348,26 +386,29 @@ export async function updateChatMessage({
 
         if (!selectedChat) throw new Error('Chat not found');
 
-        // Safely parse messages string or handle object
-        const messages = typeof selectedChat.messages === 'string'
+        const messages: ExtendedMessage[] = typeof selectedChat.messages === 'string'
             ? JSON.parse(selectedChat.messages)
-            : selectedChat.messages as ChatMessage[];
+            : selectedChat.messages;
 
-        const updatedMessages = messages.map((msg: ChatMessage) =>
-            msg.id === messageId ? { ...msg, content } : msg
+        const updatedMessages = messages.map((msg) =>
+            msg.id === messageId
+                ? {
+                    ...msg,
+                    content,
+                    toolInvocations: toolInvocations || msg.toolInvocations
+                }
+                : msg
         );
 
         const [updatedChat] = await db
             .update(chat)
-            .set({
-                messages: JSON.stringify(updatedMessages)
-            })
+            .set({ messages: JSON.stringify(updatedMessages) })
             .where(eq(chat.id, chatId))
             .returning();
 
         return updatedChat;
     } catch (error) {
-        console.error("Failed to update chat message:", error);
+        console.error('Failed to update chat message:', error);
         throw error;
     }
 }

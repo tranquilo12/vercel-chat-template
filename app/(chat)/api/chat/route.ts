@@ -1,10 +1,12 @@
 /* eslint-disable import/order */
 import { convertToCoreMessages, CoreMessage, JSONValue, StreamData, streamText, CoreAssistantMessage, CoreToolMessage } from 'ai';
+import { mergeToolResults } from '@/lib/forkUtils';
 
 import { openaiModel } from '@/ai';
 import { auth } from '@/app/(auth)/auth';
 import { deleteChatById, getChatById, saveChat } from '@/db/queries';
 import { z } from 'zod';
+import { ExtendedMessage } from '@/types/tools';
 
 // Define InterpreterArgs
 export interface InterpreterArgs {
@@ -36,14 +38,20 @@ type MessageWithTools = CoreAssistantMessage | CoreToolMessage & {
 
 export async function POST(req: Request) {
     const body = await req.json();
-    const { chatId, messages, parentChatId, forkedFromMessageId, title } = body;
+    const { chatId, messages } = body;
 
     const session = await auth();
     if (!session) {
         return new Response('Unauthorized', { status: 401 });
     }
 
+    // Preserve the ExtendedMessage type
     const coreMessages: CoreMessage[] = convertToCoreMessages(messages);
+    let updatedMessages: ExtendedMessage[] = messages.map((msg: ExtendedMessage) => ({
+        ...msg,
+        toolInvocations: msg.toolInvocations || []
+    }));
+
     const data = new StreamData();
 
     const result = await streamText({
@@ -88,36 +96,40 @@ export async function POST(req: Request) {
         },
         onChunk: async ({ chunk }) => {
             data.append(chunk as JSONValue);
-        },
-        onFinish: async ({ steps, responseMessages }) => {
-            if (session.user && session.user.id) {
-                try {
-                    const messagesWithTools = messages.map((msg: any) => ({
-                        ...msg,
-                        toolInvocations: msg.toolInvocations || []
-                    }));
 
-                    const responseWithTools = (responseMessages as MessageWithTools[]).map(msg => ({
-                        ...msg,
-                        toolInvocations: 'toolInvocations' in msg ? msg.toolInvocations : []
-                    }));
-
-                    await saveChat({
-                        id: chatId,
-                        messages: [...messagesWithTools, ...responseWithTools],
-                        userId: session.user.id,
-                    });
-
-                } catch (error) {
-                    console.error('Failed to save chat:', error);
-                    data.append({
-                        type: 'error',
-                        message: 'Failed to save chat',
-                    });
+            try {
+                const parsed = JSON.parse(data.toString());
+                if (parsed.type === 'tool_result') {
+                    updatedMessages = mergeToolResults(updatedMessages);
                 }
+            } catch (e) {
+                // skip if chunk not valid JSON
             }
-            await data.close();
         },
+        onFinish: async ({ responseMessages }) => {
+            // Convert response messages to ExtendedMessage format
+            const extendedResponseMessages = (responseMessages as ExtendedMessage[]).map(msg => ({
+                ...msg,
+                toolInvocations: msg.toolInvocations || []
+            }));
+
+            updatedMessages = mergeToolResults([
+                ...updatedMessages,
+                ...extendedResponseMessages
+            ]);
+
+            try {
+                await saveChat({
+                    id: chatId,
+                    messages: updatedMessages,
+                    userId: session.user?.id || ''
+                });
+            } catch (err) {
+                data.append({ type: 'error', message: 'Failed to save chat' });
+            }
+
+            await data.close();
+        }
     });
 
     return result.toDataStreamResponse({ data });

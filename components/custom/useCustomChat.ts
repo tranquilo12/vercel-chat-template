@@ -2,6 +2,7 @@ import { ToolInvocation, ChatRequestOptions } from 'ai';
 import React, { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
+import { mergeToolResults } from '@/lib/forkUtils';
 import { ExtendedMessage } from '@/types/tools';
 
 
@@ -106,16 +107,16 @@ const processStreamLine = (
                     if (lastMessage.id !== aiMessage.id) return prevMessages;
 
                     // Create a new tool message
-                    const toolMessage = {
-                        id: uuidv4(),
-                        role: 'tool' as const,
-                        content: JSON.stringify(lastMessage.toolInvocations?.map(invocation => ({
-                            type: 'tool-result' as const,
-                            toolCallId: invocation.toolCallId,
-                            toolName: invocation.toolName,
-                            result: invocation.args
-                        })) || [])
-                    };
+                    // const toolMessage = {
+                    //     id: uuidv4(),
+                    //     role: 'tool' as const,
+                    //     content: JSON.stringify(lastMessage.toolInvocations?.map(invocation => ({
+                    //         type: 'tool-result' as const,
+                    //         toolCallId: invocation.toolCallId,
+                    //         toolName: invocation.toolName,
+                    //         result: invocation.result ?? {}
+                    //     })) || [])
+                    // };
 
                     // Update the assistant message and add the tool message
                     return [
@@ -125,10 +126,10 @@ const processStreamLine = (
                             toolInvocations: lastMessage.toolInvocations?.map(invocation => ({
                                 ...invocation,
                                 state: 'result' as const,
-                                result: null as unknown as string
+                                result: invocation.result ?? {}
                             }))
                         },
-                        toolMessage
+                        // toolMessage
                     ];
                 });
             }
@@ -345,24 +346,26 @@ export function useCustomChat({
                 tool_calls: [], // Keep for compatibility with AI package
             };
 
+            const mergedMessages = mergeToolResults(updatedMessages);
+
             const payload = {
                 ...chatRequestOptions,
-                messages: updatedMessages.map(m => ({
+                messages: mergedMessages.map(m => ({
                     ...m,
                     toolInvocations: m.toolInvocations || [],
                 })),
                 chatId: chatRequestOptions?.chatId || id,
                 editedMessageId: forkedFromMessageId || editPoint?.id,
                 editPoint: editPoint || {
-                    id: updatedMessages[updatedMessages.length - 1]?.id,
+                    id: mergedMessages[mergedMessages.length - 1]?.id,
                     role: "user",
-                    content: updatedMessages[updatedMessages.length - 1]?.content,
-                    newContent: updatedMessages[updatedMessages.length - 1]?.content,
+                    content: mergedMessages[mergedMessages.length - 1]?.content,
+                    newContent: mergedMessages[mergedMessages.length - 1]?.content,
                     timestamp: new Date().toISOString()
                 }
             };
 
-            setMessages(prev => [...updatedMessages, aiMessage]);
+            setMessages([...mergedMessages, aiMessage]);
 
             const endpoint = isFork && forkId
                 ? `/api/chat/${id}/fork/${forkId}`

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { openaiModel } from "@/ai";
 import { auth } from "@/app/(auth)/auth";
 import { upsertFork, getForkById } from "@/db/queries";
-import { getForkChain, getForkMessages } from "@/lib/forkUtils";
+import { getForkMessages } from "@/lib/server/forkUtils.server";
 import { ExtendedMessage } from '@/types/tools';
 
 export async function POST(
@@ -17,11 +17,16 @@ export async function POST(
 	}
 
 	try {
-		const { messages, editPoint, parentMessageId } = await req.json();
-		const data = new StreamData();
+		const { messages, chatID, editedMessageId, parentMessageId, editPoint } = await req.json();
+
+		// WE need to fetch the parent fork messages and merge them with the messages
+		const parentFork = await getForkMessages(params.forkId);
+		const parentMessages = parentFork || [];
+		const mergedMessages = [...parentMessages, ...messages];
 
 		// Convert messages to core format directly, matching main chat route
-		const coreMessages = convertToCoreMessages(messages);
+		const coreMessages = convertToCoreMessages(mergedMessages);
+		const data = new StreamData();
 
 		const result = await streamText({
 			model: openaiModel,

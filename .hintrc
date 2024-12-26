@@ -4,6 +4,15 @@
   ],
   "hints": {
     "no-inline-styles": "off",
-    "axe/forms": "off"
+    "axe/forms": "off",
+    "compat-api/css": [
+      "default",
+      {
+        "ignore": [
+          "text-wrap",
+          "text-wrap: balance"
+        ]
+      }
+    ]
   }
 }
