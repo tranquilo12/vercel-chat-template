@@ -13,7 +13,6 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 
 import { DiffViewer } from "@/components/custom/DiffViewer";
-import { ForkChain } from "@/components/custom/ForkChain";
 import { Markdown } from "@/components/custom/markdown";
 import { useScrollToBottom } from "@/components/custom/use-scroll-to-bottom";
 import { highlightCode } from "@/lib/syntax-highlighting";
@@ -519,7 +518,7 @@ export function Chat({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: newForkId,
-          chatId: id,
+          forkId: forkId,
           parentMessageId: messageId,
           messages: messages.map((m) => ({
             ...m,
@@ -530,8 +529,9 @@ export function Chat({
             toolInvocations: m.toolInvocations || [],
           })),
           editPoint: {
-            messageId,
-            originalContent: originalMessage?.content || "",
+            id: messageId,
+            role: originalMessage?.role || 'user',
+            content: originalMessage?.content || "",
             newContent,
             timestamp: new Date().toISOString(),
           },

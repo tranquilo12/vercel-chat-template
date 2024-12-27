@@ -11,7 +11,6 @@ export async function GET(req: Request) {
 
   try {
     const chats = await getChatsByUserId({ id: session.user?.id! });
-    console.log('Fetched chats for user:', session.user?.id, chats);
     return NextResponse.json(chats);
   } catch (error) {
     console.error("Error fetching history:", error);

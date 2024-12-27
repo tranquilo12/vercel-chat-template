@@ -60,7 +60,7 @@ export function generateUUID(): string {
 export function convertToUIMessages(messages: Array<CoreMessage>): Array<Message> {
     return messages.reduce((chatMessages: Array<Message>, message) => {
         // Handle tool messages
-        if (message.role === "tool") {
+        if (message.role === 'tool') {
             const toolMessage: Message = {
                 id: generateId(),
                 role: 'tool',
@@ -73,8 +73,8 @@ export function convertToUIMessages(messages: Array<CoreMessage>): Array<Message
             return chatMessages;
         }
 
-        // Handle regular messages
-        let textContent = "";
+        // Handle messages with content as an array
+        let textContent = '';
         let toolInvocations: Array<ToolInvocation> = [];
 
         if (typeof message.content === "string") {
@@ -85,16 +85,17 @@ export function convertToUIMessages(messages: Array<CoreMessage>): Array<Message
                     textContent += content.text;
                 } else if (content.type === "tool-call") {
                     toolInvocations.push({
-                        state: "call",
+                        state: 'call',
                         toolCallId: content.toolCallId,
                         toolName: content.toolName,
                         args: content.args,
                     });
                 }
             }
+        } else if (typeof message.content === 'string') {
+            textContent = message.content;
         }
 
-        // Add the message with its tool invocations
         chatMessages.push({
             id: generateId(),
             role: message.role,

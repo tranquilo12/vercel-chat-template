@@ -170,9 +170,7 @@ export async function getChatsByUserId({ id }: { id: string }) {
 
 export async function getChatById({ id }: { id: string }) {
     try {
-        console.log('Fetching chat by ID:', id);
         const [selectedChat] = await db.select().from(chat).where(eq(chat.id, id));
-        console.log('Chat fetched:', selectedChat);
         return selectedChat;
     } catch (error) {
         console.error("Failed to get chat by id from database", error);
@@ -182,13 +180,11 @@ export async function getChatById({ id }: { id: string }) {
 
 export async function getChatForks({ chatId }: { chatId: string }) {
     try {
-        console.log('Fetching forks for chat:', chatId);
         const forks = await db
             .select()
             .from(fork)
             .where(eq(fork.chatId, chatId))
             .orderBy(desc(fork.createdAt));
-        console.log('Forks fetched:', forks);
         return forks;
     } catch (error) {
         console.error("Failed to get forks for chat from database", error);
@@ -197,10 +193,8 @@ export async function getChatForks({ chatId }: { chatId: string }) {
 }
 
 export async function getForkById({ id }: { id: string }): Promise<Fork | null> {
-    console.log('getForkById: Attempting to fetch fork with id:', id);
     try {
         const [selectedFork] = await db.select().from(fork).where(eq(fork.id, id));
-        console.log('getForkById: Raw database result:', selectedFork);
         if (!selectedFork) {
             console.log('getForkById: No fork found with id:', id);
             return null;
@@ -216,14 +210,6 @@ export async function getForkById({ id }: { id: string }): Promise<Fork | null> 
             createdAt: selectedFork.createdAt || new Date(),
             title: selectedFork.title || undefined,
         } as Fork;
-        console.log('getForkById: Transformed fork:', {
-            id: transformedFork.id,
-            chatId: transformedFork.chatId,
-            parentMessageId: transformedFork.parentMessageId,
-            messageDiffsCount: transformedFork.messageDiffs.length,
-            appendedMessagesCount: transformedFork.appendedMessages.length,
-            status: transformedFork.status,
-        });
         return transformedFork;
     } catch (error) {
         console.error('getForkById: Failed to get fork from database:', {
@@ -236,7 +222,6 @@ export async function getForkById({ id }: { id: string }): Promise<Fork | null> 
 
 export async function deleteForkById({ id }: { id: string }) {
     try {
-        console.log('deleteForkById: Attempting to delete fork with id:', id);
         return await db.delete(fork).where(eq(fork.id, id));
     } catch (error) {
         console.error("Failed to delete fork by id from database", error);
@@ -276,7 +261,8 @@ export async function upsertFork({
         messages.forEach((msg) => {
             if (!msg) return;
 
-            const baseMsg = baseMessages.find(m => m?.id === msg.id);
+            // If no base messages, treat all messages as appended
+            const baseMsg = baseMessages?.length > 0 ? baseMessages.find(m => m?.id === msg.id) : null;
             if (baseMsg) {
                 const contentChanged = baseMsg.content !== msg.content;
                 const toolsChanged = !areToolInvocationsEqual(baseMsg.toolInvocations, msg.toolInvocations);
@@ -308,8 +294,14 @@ export async function upsertFork({
             chatId,
             parentChatId,
             parentMessageId,
-            messages: JSON.stringify(messages),
-            baseMessages: JSON.stringify(baseMessages),
+            messages: messages.map(msg => ({
+                ...msg,
+                toolInvocations: msg.toolInvocations || []
+            })),
+            baseMessages: (baseMessages || []).map(msg => ({
+                ...msg,
+                toolInvocations: msg.toolInvocations || []
+            })),
             messageDiffs: messageDiffs,
             appendedMessages: appendedMessages,
             ancestry: ancestry,

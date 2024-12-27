@@ -14,11 +14,6 @@ export async function POST(req: Request) {
 
 	try {
 		const body = await req.json();
-		console.log('Creating new fork with data:', {
-			id: body.id,
-			chatId: body.chatId,
-			messageCount: body.messages?.length
-		});
 
 		const { id, chatId, parentChatId, parentMessageId, messages, baseMessages, editPoint } = body;
 
@@ -35,12 +30,6 @@ export async function POST(req: Request) {
 			title: `Fork of ${chatId}`,
 		});
 
-		console.log('Fork created successfully:', {
-			id: fork.id,
-			chatId: fork.chatId,
-			status: fork.status,
-			messageCount: fork.messages?.length
-		});
 
 		return NextResponse.json(fork);
 	} catch (error) {
@@ -60,8 +49,6 @@ export async function PATCH(req: Request) {
 
 	try {
 		const body = await req.json();
-		console.log('Attempting to update fork:', { id: body.id });
-
 		// First check if fork exists
 		const existingFork = await getForkById({ id: body.id });
 		if (!existingFork) {
@@ -77,12 +64,6 @@ export async function PATCH(req: Request) {
 			messages: messages || existingFork.messages,
 			editPoint: editPoint || existingFork.editPoint,
 			status: 'draft'
-		});
-
-		console.log('Fork updated successfully:', {
-			id: updatedFork.id,
-			status: updatedFork.status,
-			messageCount: updatedFork.messages?.length
 		});
 
 		return NextResponse.json(updatedFork);
@@ -132,20 +113,17 @@ export async function DELETE(req: Request) {
 
 	try {
 		const requestBody = await req.text();
-		console.log("Raw request body:", requestBody);
 
 		const { id } = JSON.parse(requestBody);
 
 		if (!id) {
 			return new Response("Missing fork ID", { status: 400 });
 		}
-		console.log('Deleting fork:', { id });
 		await deleteForkById({ id });
 		const response = {
 			status: "ok",
 			message: `Fork ${id} deleted.`,
 		};
-		console.log('Sending response:', response);
 		return NextResponse.json(response);
 	} catch (error) {
 		console.error("Error deleting fork:", error);
@@ -153,7 +131,6 @@ export async function DELETE(req: Request) {
 			status: "error",
 			message: "Failed to delete fork",
 		};
-		console.log('Sending error response:', response);
 		return NextResponse.json(response, { status: 500 });
 	}
 }

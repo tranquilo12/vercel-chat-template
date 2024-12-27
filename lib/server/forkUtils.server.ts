@@ -3,18 +3,19 @@ import { Fork, ForkAncestry } from "@/types/fork";
 import { ExtendedMessage } from "@/types/tools";
 
 export async function getForkChain(forkId: string): Promise<Fork[]> {
-	console.log("getForkChain: Starting with forkId:", forkId);
 	const forkChain: Fork[] = [];
 	const visited = new Set<string>();
-	let currentForkId = forkId;
+	let currentId = forkId;
 
-	while (currentForkId && !visited.has(currentForkId)) {
-		visited.add(currentForkId);
-		const fork = await getForkById({ id: currentForkId });
+	while (currentId && !visited.has(currentId)) {
+		visited.add(currentId);
+		const fork = await getForkById({ id: currentId });
+
 		if (!fork) break;
-
 		forkChain.unshift(fork);
-		currentForkId = fork.parentChatId || "";
+
+		// Try to get the parent, whether it's a fork or chat
+		currentId = fork.parentChatId || "";
 	}
 
 	return forkChain;

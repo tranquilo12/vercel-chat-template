@@ -106,19 +106,6 @@ const processStreamLine = (
                     const lastMessage = prevMessages[prevMessages.length - 1];
                     if (lastMessage.id !== aiMessage.id) return prevMessages;
 
-                    // Create a new tool message
-                    // const toolMessage = {
-                    //     id: uuidv4(),
-                    //     role: 'tool' as const,
-                    //     content: JSON.stringify(lastMessage.toolInvocations?.map(invocation => ({
-                    //         type: 'tool-result' as const,
-                    //         toolCallId: invocation.toolCallId,
-                    //         toolName: invocation.toolName,
-                    //         result: invocation.result ?? {}
-                    //     })) || [])
-                    // };
-
-                    // Update the assistant message and add the tool message
                     return [
                         ...prevMessages.slice(0, -1),
                         {
@@ -129,7 +116,6 @@ const processStreamLine = (
                                 result: invocation.result ?? {}
                             }))
                         },
-                        // toolMessage
                     ];
                 });
             }

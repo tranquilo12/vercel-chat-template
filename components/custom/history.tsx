@@ -55,9 +55,6 @@ export const History = ({ user }: { user: User | undefined }) => {
     mutate,
   } = useSWR<Array<Chat>>(user ? "/api/history" : null, fetcher, {
     fallbackData: [],
-    onSuccess: (data) => {
-      console.log('Fetched history:', data);
-    },
   });
 
   // Fetch forks for each chat

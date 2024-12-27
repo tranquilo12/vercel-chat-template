@@ -11,8 +11,6 @@ export default async function ForkPage({
 }: {
 	params: { id: string; forkId: string };
 }) {
-	console.log('Attempting to fetch fork and chat:', { id, forkId });
-
 	const [fork, baseChat] = await Promise.all([
 		getForkById({ id: forkId }).catch(err => {
 			console.error('Failed to get fork:', err);
@@ -24,31 +22,21 @@ export default async function ForkPage({
 		})
 	]);
 
-	console.log('Retrieved data:', {
-		fork: fork ? { ...fork, id: fork.id, chatId: fork.chatId } : null,
-		baseChat: baseChat ? { id: baseChat.id } : null
-	});
-
 	if (!fork || !baseChat) {
 		console.error('Not found:', { hasFork: !!fork, hasChat: !!baseChat });
 		notFound();
 	}
 
 	// Get the complete fork chain
-	console.log('Fetching fork chain for:', forkId);
 	const forkChain = await getForkChain(forkId);
-	console.log('Fork chain length:', forkChain.length);
 
 	// Get base messages
 	const baseMessages = typeof baseChat.messages === 'string'
 		? JSON.parse(baseChat.messages)
 		: baseChat.messages;
 
-	console.log('Base messages count:', baseMessages.length);
-
 	// Reconstruct messages through the fork chain
 	const reconstructedMessages = await getForkMessages(forkId);
-	console.log('Reconstructed messages count:', reconstructedMessages.length);
 
 	return (
 		<Chat
